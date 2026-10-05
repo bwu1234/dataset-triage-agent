@@ -51,7 +51,8 @@ Frames live on disk, not in state, which keeps checkpoints small.
 | `triage/faults.py` | Synthetic dirty fixtures, manifests, outcome checks | built |
 | `triage/config.py` | `Settings` via pydantic-settings, `TRIAGE_` env prefix | built |
 | `triage/graph.py` | State, nodes, edges, compile | planned |
-| `triage/planner.py` | Prompt and `ChatOllama` structured output | planned |
+| `triage/planner.py` | Prompt and `ChatOllama` structured output, single attempt | built |
+| `triage/gate.py` | M2 compatibility gate: parse and apply rate per model | built |
 | `triage/cli.py` | `run`, `resume`, `history`, `fork` | planned |
 | `triage/evaluate.py` | Fixture evaluation runner | planned |
 

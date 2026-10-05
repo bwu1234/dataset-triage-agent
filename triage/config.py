@@ -15,7 +15,12 @@ class ModelConfig(BaseModel):
     base_url: str = "http://localhost:11434"
     temperature: float = 0.0
     # Passed to Ollama's ``think`` parameter; None leaves the model default.
-    think: bool | str | None = None
+    # Off by default: with thinking on, qwen3.5:9b-mlx spent a 3000-token
+    # budget reasoning and never emitted the plan (M2 gate, 2026-10-05).
+    think: bool | str | None = False
+    # Caps thinking plus output tokens, so a runaway generation stops with
+    # done_reason=length instead of running until the timeout.
+    num_predict: int | None = 4096
     timeout_s: float = 600.0
 
 

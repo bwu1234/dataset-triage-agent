@@ -17,6 +17,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8.0",
     "ruff>=0.6",
 ]
@@ -33,6 +34,9 @@ testpaths = ["tests"]
 # Deselect with `-m "not live"`. Live tests call local Ollama and are slow, so
 # the default check stays offline and deterministic.
 markers = ["live: talks to a real local Ollama daemon"]
+# Keep the default run offline even when Ollama is up; `-m live` on the
+# command line overrides this because pytest uses the last -m given.
+addopts = "-m 'not live'"
 
 [tool.ruff.lint]
 # Pin the rule set rather than relying on ruff's default selection, which

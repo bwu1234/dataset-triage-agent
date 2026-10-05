@@ -20,7 +20,7 @@ README contrasts the two choices.
 | ID | Days | Milestone | Status |
 |---|---|---|---|
 | M1 | 1–2 | Op schema, profiler, executor, impact measurement, fault generator, offline tests | Done |
-| M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | Planned |
+| M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | In progress (gate passed) |
 | M3 | 5 | Human approval via `interrupt()`, CLI | Planned |
 | M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Planned |
 | M5 | 8 | Validation node and bounded replan loop | Planned |
@@ -55,6 +55,24 @@ hint for each fault.
   output is unreliable, add a parse-and-retry step that feeds the pydantic
   error back to the model, counted against `max_plan_retries`.
 - Live tests are marked `live` and skip when Ollama or the model is missing.
+
+**Gate result (2026-10-05): passed; no parse-and-retry step needed.**
+`uv run python -m triage.gate --models qwen3.5:9b-mlx qwen3.8:27b-mlx --seeds 0 1 2 3 4`,
+one call per fixture, no retry, `think=False`:
+
+| Model | Parsed | Applied without `OpError` | Faults fixed (info) | Mean s |
+|---|---|---|---|---|
+| `qwen3.5:9b-mlx` | 5/5 | 3/5 | 3–4 of 8 | 15.9 |
+| `qwen3.8:27b-mlx` | 5/5 | 5/5 | 5–6 of 8 | 38.2 |
+
+- Both 9b failures were op order (`impute` median on `amount` while still
+  text), not malformed output. Schema retry would not fix that; the
+  `OpError`-to-audit-log rule here and the M5 replan loop do.
+- With the model's default thinking on, `qwen3.5:9b-mlx` spent a 3000-token
+  budget reasoning and emitted no plan; without a cap it ran past 10 minutes.
+  `ModelConfig` now defaults to `think=False` and `num_predict=4096`.
+- `uv run pytest -q -m live` gives 2 passed (one per model, seed 0);
+  `uv run pytest -q` gives 40 passed, 2 deselected; ruff clean.
 
 ### M3: human approval
 
@@ -132,5 +150,6 @@ earned its place here and why `ds-research-agent` does not use it.
 
 ## Open questions
 
-- Whether `with_structured_output` on the Qwen models needs a retry step (M2 gate).
+- Whether thinking with a larger token budget improves plan quality enough to
+  justify the latency. Measure in M7 rather than guess.
 - Whether to store intermediate frames as Parquet (needs `pyarrow`) or CSV.
