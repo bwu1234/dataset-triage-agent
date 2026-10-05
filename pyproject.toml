@@ -1,0 +1,40 @@
+[project]
+name = "dataset-triage-agent"
+version = "0.1.0"
+description = "LangGraph agent that proposes typed cleaning ops for a CSV and pauses for human approval on destructive ones"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=3.0",  # Tested on 3.x only; 3.0 changed string and copy semantics.
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    # Graph runtime and model client. Floors are the releases the plan was
+    # written against (checked on PyPI 2026-10-04); uv.lock pins exact versions.
+    "langgraph>=1.2.12",
+    "langgraph-checkpoint-sqlite>=3.1.1",
+    "langchain-ollama>=1.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["triage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Deselect with `-m "not live"`. Live tests call local Ollama and are slow, so
+# the default check stays offline and deterministic.
+markers = ["live: talks to a real local Ollama daemon"]
+
+[tool.ruff.lint]
+# Pin the rule set rather than relying on ruff's default selection, which
+# changes across releases.
+select = ["E4", "E7", "E9", "F", "I"]
