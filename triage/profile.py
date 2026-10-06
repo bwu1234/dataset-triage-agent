@@ -18,6 +18,10 @@ class ColumnProfile(BaseModel):
     sample_values: list[str]
     # Hints for text columns: counts over non-null string values.
     missing_token_count: int = 0
+    # The markers counted above, one spelling per configured token. Samples
+    # alone hid them: region's first five distinct values held one of its
+    # three markers, so no plan could list the others (M7 eval).
+    missing_tokens_found: list[str] = []
     whitespace_padded_count: int = 0
     numeric_parse_rate: float | None = None
     # Present for numeric columns.
@@ -66,7 +70,11 @@ def _profile_column(name: str, s: pd.Series, config: ProfilerConfig) -> ColumnPr
     if not strings.empty:
         tokens = {t.strip().lower() for t in config.missing_tokens}
         stripped = strings.str.strip()
-        col.missing_token_count = int(stripped.str.lower().isin(tokens).sum())
+        lowered = stripped.str.lower()
+        is_token = lowered.isin(tokens)
+        col.missing_token_count = int(is_token.sum())
+        found = stripped[is_token].groupby(lowered[is_token], sort=True).first()
+        col.missing_tokens_found = [_truncate(v, config.max_sample_chars) for v in found]
         col.whitespace_padded_count = int((stripped != strings).sum())
         parsed = pd.to_numeric(stripped, errors="coerce")
         col.numeric_parse_rate = round(float(parsed.notna().mean()), 4)

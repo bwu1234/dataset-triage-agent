@@ -26,7 +26,8 @@ are the only actions available.
 Ops:
 - strip_whitespace(column): trim leading/trailing spaces.
 - standardize_missing(column, tokens): turn missing-value markers such as \
-'N/A' into real nulls. List the exact marker strings seen in the profile.
+'N/A' into real nulls. List every marker in the column's \
+missing_tokens_found.
 - cast_type(column, to, datetime_format?): to is int, float, string, \
 datetime, or bool. Values that fail to parse become null, so remove markers \
 first.

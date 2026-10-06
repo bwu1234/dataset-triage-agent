@@ -18,8 +18,11 @@ checkpointed to SQLite, so a stopped or killed run continues with
 triage.crash_demo` shows it. Each output is validated, and a failing run is
 replanned up to a limit. `uv run python -m triage.cli history --thread <id>`
 lists a run's checkpoints, and `... fork --thread <id> --checkpoint <cid>`
-runs it again from one, say to answer an approval differently. Evaluation is
-planned, not built. See
+runs it again from one, say to answer an approval differently.
+`uv run python -m triage.evaluate` scores whole runs on synthetic fixtures
+with a scripted approver; on ten fixtures `qwen3.8:27b-mlx` fixed 68 of 80
+injected faults in each approver condition, `qwen3.5:9b-mlx` 35 and 25. The
+write-up (M8) is planned. See
 [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Design in one paragraph

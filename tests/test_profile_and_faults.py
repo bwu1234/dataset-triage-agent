@@ -70,6 +70,10 @@ def test_profile_surfaces_fault_hints(fixture_frame):
     cols = {c.name: c for c in p.columns}
     assert p.duplicate_rows > 0
     assert cols["region"].missing_token_count > 0
+    # Every injected marker is named, not just those among the samples.
+    assert set(cols["region"].missing_tokens_found) == set(df["region"][
+        df["region"].str.lower().isin(["n/a", "?", "unknown"])])
+    assert cols["customer"].missing_tokens_found == []
     assert cols["customer"].whitespace_padded_count > 0
     assert 0 < cols["amount"].numeric_parse_rate < 1
     assert cols["rating"].null_count > 0
@@ -81,3 +85,11 @@ def test_profile_truncates_samples():
     frame = pd.DataFrame({"t": ["x" * 100]})
     p = profile(frame, SETTINGS.profiler)
     assert len(p.columns[0].sample_values[0]) == SETTINGS.profiler.max_sample_chars
+
+
+def test_missing_tokens_found_lists_one_spelling_per_token():
+    s = pd.Series(["a", " N/A", "n/a ", "?", "b", "NULL"])
+    [col] = profile(pd.DataFrame({"x": s}), SETTINGS.profiler).columns
+    assert col.missing_token_count == 4
+    # Sorted by lowercased token; the first spelling seen wins.
+    assert col.missing_tokens_found == ["?", "N/A", "NULL"]
