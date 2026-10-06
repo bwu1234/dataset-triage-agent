@@ -10,8 +10,10 @@ locally on Ollama, on synthetic data.
 
 Early. The deterministic parts are built and tested: op schema, executor,
 impact measurement, profiler, and synthetic fault fixtures (milestone M1).
-The planner call is built and passed the M2 structured-output gate on both
-local models. The graph, approval flow, and CLI are planned, not built. See
+The planner and the graph (load, profile, plan, route, apply, finish) are
+built. Ops whose measured impact exceeds the risk policy are held, not
+applied, until the approval flow lands. Approval, CLI, durable runs, and
+validation are planned, not built. See
 [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Design in one paragraph
