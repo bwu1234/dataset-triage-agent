@@ -1,7 +1,7 @@
 # Implementation plan
 
-A two-week build. Each milestone records its status with evidence. Do not mark
-a milestone done without a command that shows it.
+Each milestone records its status with evidence. Do not mark a milestone
+done without a command that shows it.
 
 ## Goal
 
@@ -10,23 +10,23 @@ ops, applies safe ops automatically, pauses for human approval on destructive
 ones, survives a crash mid-run, validates its own output, and writes an audit
 log. Everything runs locally on synthetic data.
 
-The project exists to use LangGraph where its features fit: typed state,
-conditional routing, `interrupt()`, durable checkpoints, and replay. The
-companion project `ds-research-agent` uses a hand-written loop instead; the
-README contrasts the two choices.
+LangGraph supplies what the problem needs: typed state, conditional
+routing, `interrupt()`, durable checkpoints, and replay. The companion
+project `ds-research-agent` uses a hand-written loop instead; the README
+contrasts the two choices.
 
 ## Milestones
 
-| ID | Days | Milestone | Status |
-|---|---|---|---|
-| M1 | 1–2 | Op schema, profiler, executor, impact measurement, fault generator, offline tests | Done |
-| M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | Done |
-| M3 | 5 | Human approval via `interrupt()`, CLI | Done |
-| M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Done |
-| M5 | 8 | Validation node and bounded replan loop | Done |
-| M6 | 9 | Replay from earlier checkpoints | Done |
-| M7 | 10 | Evaluation on synthetic fixtures | Done |
-| M8 | 10 | README, graph diagram, LangGraph-vs-hand-written write-up | Done |
+| ID | Milestone | Status |
+|---|---|---|
+| M1 | Op schema, profiler, executor, impact measurement, fault generator, offline tests | Done |
+| M2 | Graph with planner node and risk routing, in-memory checkpointer | Done |
+| M3 | Human approval via `interrupt()`, CLI | Done |
+| M4 | `SqliteSaver`, crash-and-resume demo | Done |
+| M5 | Validation node and bounded replan loop | Done |
+| M6 | Replay from earlier checkpoints | Done |
+| M7 | Evaluation on synthetic fixtures | Done |
+| M8 | README, graph diagram, LangGraph-vs-hand-written write-up | Done |
 
 ### M1: deterministic parts (done)
 
