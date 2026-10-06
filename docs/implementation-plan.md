@@ -22,7 +22,7 @@ README contrasts the two choices.
 | M1 | 1–2 | Op schema, profiler, executor, impact measurement, fault generator, offline tests | Done |
 | M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | Done |
 | M3 | 5 | Human approval via `interrupt()`, CLI | Done |
-| M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Planned |
+| M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Done |
 | M5 | 8 | Validation node and bounded replan loop | Planned |
 | M6 | 9 | Replay from earlier checkpoints | Planned |
 | M7 | 10 | Evaluation on synthetic fixtures | Planned |
@@ -123,7 +123,7 @@ seed 0 with `qwen3.5:9b-mlx` (one-off script, not a test) planned 5 ops in
   values and model reasons come from the file), and thread ids must be plain
   names because they become a directory under `runs_dir`.
 - Only `run` exists. With `InMemorySaver` a stopped run cannot be resumed, so
-  `resume` waits for M4.
+  `resume` waits for M4 (built there).
 
 Evidence: `uv run pytest -q` gives 60 passed, 2 deselected (10 in
 `tests/test_graph.py`, 10 in `tests/test_cli.py`, fake planner, scripted
@@ -132,7 +132,7 @@ answers); those two files also pass with `LANGGRAPH_STRICT_MSGPACK=true` and
 `yes a` piped to `triage.cli run`): 5 ops planned in 41.0 s, 1 applied
 without asking, 4 approved and applied, status `done`.
 
-### M4: durable runs
+### M4: durable runs (done)
 
 - Swap in `SqliteSaver` at `Settings.checkpoint_db`.
 - Demo script: start a run, kill the process while it waits for approval,
@@ -140,6 +140,46 @@ without asking, 4 approved and applied, status `done`.
 - The DataFrame is not stored in graph state. State holds file paths;
   `apply` writes each intermediate frame to `runs/<thread_id>/` (built in
   M2; see above). This keeps checkpoints small and makes `apply` idempotent.
+
+**Result (2026-10-05): built.** `open_checkpointer` in `triage/graph.py`,
+`resume` in `triage/cli.py`, demo in `triage/crash_demo.py`. Differences
+from the list above, on purpose:
+
+- **`cli run` refuses a thread that already has checkpoints.** Checked
+  against langgraph 1.2.12: new input on an interrupted thread starts again
+  at `load`, drops the pending approval, and appends a second `loaded`/
+  `planned` pair to the audit log. `cli resume --thread <id>` is the only way
+  to continue a thread.
+- `resume` covers two crash points: a pending `interrupt()` (asks, then sends
+  `Command(resume=...)`) and a node that died mid-run (streams `None`, so
+  LangGraph re-runs only that node; mid-`plan` that means one more model
+  call).
+- **`apply` now keys its output file on the input file's bytes, not its
+  path.** With durable thread ids, a reused id (say, after deleting the
+  database) rewrites `step_000.pkl` from another CSV under the same name, and
+  the path-keyed hash read the old run's frames. Re-runs on the same data
+  still reuse files: pickling the same frame gives the same bytes.
+- The demo kills with SIGKILL, not Ctrl-C, so no handler or cleanup runs.
+  The CLI prints the approval prompt only after the interrupt checkpoint is
+  written, so the kill always lands after it.
+- Not handled: two processes resuming the same thread at once, and a
+  resume under different `Settings` (risk policy, `runs_dir`) than the run
+  started with. `route` uses the resuming process's policy.
+
+Evidence: `uv run pytest -q` gives 65 passed, 2 deselected (5 new in
+`tests/test_durable.py`): a real subprocess SIGKILLed at the approval prompt
+and resumed by a second process (`tests/cli_child.py`, fake planner);
+a crash inside `apply` resumed through a fresh connection, with that node
+alone re-run; `run` refusing an existing thread; `resume` of unknown and
+finished threads; a reused thread id on another CSV giving the same output
+as a fresh run (fails with the old path-keyed hash). The graph, CLI and
+durable tests also pass with `LANGGRAPH_STRICT_MSGPACK=true` and `-W error`;
+ruff clean. Live (`TRIAGE_MODEL__NAME=qwen3.5:9b-mlx uv run python -m
+triage.crash_demo --seed 0`, 47.5 s): 5 ops planned in 44.4 s, process
+SIGKILLed at approval #1, the second process resumed at `approve`, approved
+4 ops, status `done`, exit 0; the final audit log has one `planned` entry.
+Separately, Ctrl-C during planning exits 130 and `resume` re-runs `plan`,
+then finishes with status `done`.
 
 ### M5: validation and replanning
 

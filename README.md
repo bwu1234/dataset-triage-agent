@@ -13,7 +13,9 @@ impact measurement, profiler, and synthetic fault fixtures (milestone M1).
 The planner, the graph, and human approval are built: ops whose measured
 impact exceeds the risk policy pause the run for a person to approve, reject,
 or edit, via `uv run python -m triage.cli run <csv> --thread <id>`. Runs are
-in memory only; durable runs, replay, and validation are planned, not built. See
+checkpointed to SQLite, so a stopped or killed run continues with
+`uv run python -m triage.cli resume --thread <id>`; `uv run python -m
+triage.crash_demo` shows it. Replay and validation are planned, not built. See
 [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Design in one paragraph

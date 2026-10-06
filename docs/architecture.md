@@ -25,8 +25,14 @@ flowchart TD
 `Command(resume=...)` on the same `thread_id`. An edited op returns to
 `route` so its own impact is measured before it can be applied.
 
-Planned (M4–M5): `SqliteSaver` replaces `InMemorySaver` so a killed process
-resumes where it stopped, and `validate` sits between `route` and `finish`:
+The CLI checkpoints every step to `SqliteSaver` at `Settings.checkpoint_db`
+(`open_checkpointer`), so `cli resume` continues a stopped or killed run in a
+new process: it answers a pending `interrupt()`, or re-runs the node that was
+in progress (`apply` reuses its content-keyed output file). `cli run` refuses
+an existing thread, because new input on a thread restarts at `load` and drops
+any pending approval.
+
+Planned (M5): `validate` sits between `route` and `finish`:
 
 ```mermaid
 flowchart TD
@@ -71,7 +77,8 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/graph.py` | State, nodes (incl. `approve`), edges, compile | built |
 | `triage/planner.py` | Prompt and `ChatOllama` structured output, single attempt | built |
 | `triage/gate.py` | M2 compatibility gate: parse and apply rate per model | built |
-| `triage/cli.py` | `run` (built); `resume`, `history`, `fork` (planned) | partly built |
+| `triage/cli.py` | `run`, `resume` (built); `history`, `fork` (planned) | partly built |
+| `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
 | `triage/evaluate.py` | Fixture evaluation runner | planned |
 
 ## Ops
