@@ -103,8 +103,8 @@ def test_resume_of_unknown_or_finished_thread(tmp_path):
 
 def test_reused_thread_id_does_not_reuse_frames_from_another_input(tmp_path):
     # Same thread id and runs_dir, a fresh checkpoint store, a different CSV:
-    # ``step_000.pkl`` keeps its name, so a path-keyed apply would read the
-    # first run's stale output.
+    # with fixed or path-keyed file names, the second run would read the first
+    # run's stale frames.
     def cleaned(seed, runs_dir, db):
         settings = Settings(runs_dir=runs_dir, checkpoint_db=db)
         with open_checkpointer(db) as saver:

@@ -200,7 +200,7 @@ def test_retries_exhausted_finishes_failed_without_output(tmp_path):
     assert final["status"] == "failed" and final["retries"] == 2
     assert "output_path" not in final and "'nope' not found" in final["last_error"]
     assert _actions(final)[-1] == ("finished", None)
-    assert not (tmp_path / "runs" / "t1" / "cleaned.csv").exists()
+    assert not list((tmp_path / "runs" / "t1").glob("cleaned*.csv"))
 
 
 def test_planner_failure_is_retried_with_the_error_as_feedback(tmp_path):

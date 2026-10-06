@@ -36,6 +36,14 @@ in progress (`apply` reuses its content-keyed output file). `cli run` refuses
 an existing thread, because new input on a thread restarts at `load` and drops
 any pending approval.
 
+`cli history` lists a thread's checkpoints (`get_state_history`) and `cli
+fork` runs the thread again from one of them, as a new branch of the same
+thread: it streams `None` with that `checkpoint_id`, which LangGraph treats
+as time travel, so a pending approval is asked again rather than answered
+with the old value. Every file under `run_dir` is content-keyed
+(`step_000_<key>.pkl`, `step_<n>_<op_key>.pkl`, `cleaned_<key>.csv`), so
+branches never overwrite each other's frames or output.
+
 `validate` (`triage.validate.check_output`) compares the output with the
 loaded file and fails on: an op skipped with `OpError`; more than
 `ValidationPolicy.max_rows_removed_fraction` of rows removed in total; a
@@ -48,7 +56,7 @@ ops are not stacked on. Planner parse and transport failures use the same
 (`ModelConfig.max_error_chars`) rather than quoting the reply. When a replan
 proposes an op a person already answered, on the same input bytes, `route`
 reuses that answer (`RiskPolicy.reuse_decisions`). Out of retries, the run finishes `failed` with no
-`cleaned.csv`.
+`cleaned_*.csv`.
 
 ## State (built, `triage.graph.State`)
 
@@ -56,7 +64,7 @@ reuses that answer (`RiskPolicy.reuse_decisions`). Out of retries, the run finis
 |---|---|---|
 | `input_path` | `str` | Source CSV; the only input field |
 | `run_dir` | `str` | `Settings.runs_dir / thread_id` |
-| `start_path` | `str` | The loaded frame (`step_000.pkl`); each plan attempt starts here |
+| `start_path` | `str` | The loaded frame (`step_000_<key>.pkl`); each plan attempt starts here |
 | `current_path` | `str` | Latest intermediate frame on disk |
 | `profile` | `DatasetProfile` | From `triage.profile` |
 | `plan` | `CleaningPlan` | From the planner |
@@ -67,7 +75,7 @@ reuses that answer (`RiskPolicy.reuse_decisions`). Out of retries, the run finis
 | `last_error` | `str \| None` | Why the last plan failed; fed back to the next planner call |
 | `decisions` | `dict[str, "approve" \| "reject"]` | A person's answers by `op_key` (input bytes + op without `reason`), reused when a replan meets the same op on the same data |
 | `status` | `"running" \| "done" \| "failed"` | |
-| `output_path` | `str` | `run_dir/cleaned.csv`, set by `finish` |
+| `output_path` | `str` | `run_dir/cleaned_<key>.csv`, keyed on the final frame; set by `finish` |
 
 Frames live on disk, not in state, which keeps checkpoints small. The
 checkpointer's serializer is limited to the state's own pydantic types
@@ -87,7 +95,7 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/graph.py` | State, nodes (incl. `approve`), edges, compile | built |
 | `triage/planner.py` | Prompt and `ChatOllama` structured output, single attempt | built |
 | `triage/gate.py` | M2 compatibility gate: parse and apply rate per model | built |
-| `triage/cli.py` | `run`, `resume` (built); `history`, `fork` (planned) | partly built |
+| `triage/cli.py` | `run`, `resume`, `history`, `fork` | built |
 | `triage/validate.py` | `check_output`: invariants on a finished run's output | built |
 | `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
 | `triage/evaluate.py` | Fixture evaluation runner | planned |

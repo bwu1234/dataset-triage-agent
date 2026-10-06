@@ -16,7 +16,10 @@ or edit, via `uv run python -m triage.cli run <csv> --thread <id>`. Runs are
 checkpointed to SQLite, so a stopped or killed run continues with
 `uv run python -m triage.cli resume --thread <id>`; `uv run python -m
 triage.crash_demo` shows it. Each output is validated, and a failing run is
-replanned up to a limit. Replay and evaluation are planned, not built. See
+replanned up to a limit. `uv run python -m triage.cli history --thread <id>`
+lists a run's checkpoints, and `... fork --thread <id> --checkpoint <cid>`
+runs it again from one, say to answer an approval differently. Evaluation is
+planned, not built. See
 [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Design in one paragraph
