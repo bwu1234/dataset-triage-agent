@@ -1,9 +1,9 @@
-"""The triage graph: load, profile, plan, then route each op to apply or hold.
+"""The triage graph: load, profile, plan, then route each op to apply or approve.
 
-M2 scope. An op whose measured impact exceeds ``RiskPolicy`` is held: logged
-and not applied. M3 replaces that branch with an ``approve`` node that calls
-``interrupt()``. Validation and replanning (M5) are not wired in yet, so a run
-ends at ``finish`` once every op has been routed.
+An op whose measured impact exceeds ``RiskPolicy`` goes to ``approve``, which
+pauses the run with ``interrupt()`` until a person approves, rejects, or edits
+it. Validation and replanning (M5) are not wired in yet, so a run ends at
+``finish`` once every op has been routed.
 
 Frames never enter graph state. Each node reads the frame at ``current_path``
 and ``apply`` writes a new file, so checkpoints hold only paths and small
@@ -12,6 +12,7 @@ pydantic models.
 
 import hashlib
 import operator
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypedDict, get_args
 
@@ -21,7 +22,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel
+from langgraph.types import interrupt
+from pydantic import BaseModel, model_validator
 
 from triage.config import Settings
 from triage.executor import OpError, apply_op
@@ -33,11 +35,35 @@ from triage.profile import ColumnProfile, DatasetProfile, profile
 
 
 class AuditEntry(BaseModel):
-    action: Literal["loaded", "planned", "plan_failed", "applied", "skipped", "held", "finished"]
+    action: Literal["loaded", "planned", "plan_failed", "applied", "skipped", "approved",
+                    "rejected", "edited", "finished"]
     op_index: int | None = None
     op: Op | None = None
     impact: Impact | None = None
     detail: str | None = None
+
+
+class ApprovalRequest(BaseModel):
+    """What ``approve`` shows a person: the op and its measured impact."""
+
+    op_index: int
+    op: Op
+    impact: Impact
+
+
+class ApprovalDecision(BaseModel):
+    """The resume value for ``approve``. ``edit`` replaces the op; the
+    replacement goes back through ``route`` so its own impact is measured."""
+
+    action: Literal["approve", "reject", "edit"]
+    op: Op | None = None
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def _op_only_for_edit(self) -> "ApprovalDecision":
+        if (self.action == "edit") != (self.op is not None):
+            raise ValueError("op is required for action='edit' and not allowed otherwise")
+        return self
 
 
 class State(TypedDict, total=False):
@@ -48,7 +74,7 @@ class State(TypedDict, total=False):
     plan: CleaningPlan
     op_index: int
     # Set by ``route`` for the conditional edge that follows it.
-    decision: Literal["apply", "next", "done"]
+    decision: Literal["apply", "approve", "next", "done"]
     # ``operator.add`` is the reducer: nodes return new entries and LangGraph
     # appends them, instead of each node rewriting the whole list.
     audit: Annotated[list[AuditEntry], operator.add]
@@ -62,12 +88,21 @@ class State(TypedDict, total=False):
 # makes the checkpointer revive only these (plus LangGraph's built-in safe
 # types) instead of importing whatever class a checkpoint names.
 STATE_TYPES: tuple[type, ...] = (
-    AuditEntry, Impact, DatasetProfile, ColumnProfile, CleaningPlan, *get_args(AnyOp),
+    AuditEntry, Impact, DatasetProfile, ColumnProfile, CleaningPlan, ApprovalRequest,
+    ApprovalDecision, *get_args(AnyOp),
 )
 
 
 def make_serde() -> JsonPlusSerializer:
     return JsonPlusSerializer(allowed_msgpack_modules=STATE_TYPES)
+
+
+def check_thread_id(thread_id: str) -> str:
+    """The thread id names a directory under ``runs_dir``, so it must be a
+    plain name: no separators, no leading dot."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}", thread_id):
+        raise ValueError(f"thread id must be letters, digits, '_', '.', '-': {thread_id!r}")
+    return thread_id
 
 
 def run_config(thread_id: str) -> RunnableConfig:
@@ -84,7 +119,7 @@ def build_graph(
     planner = planner if planner is not None else make_planner(settings.model)
 
     def load(state: State, config: RunnableConfig) -> State:
-        run_dir = settings.runs_dir / config["configurable"]["thread_id"]
+        run_dir = settings.runs_dir / check_thread_id(config["configurable"]["thread_id"])
         df = load_csv(Path(state["input_path"]), settings.csv_na_values)
         path = run_dir / "step_000.pkl"
         save_frame(df, path)
@@ -124,11 +159,28 @@ def build_graph(
             return {"decision": "next", "op_index": i + 1,
                     "audit": [AuditEntry(action="skipped", op_index=i, op=op, detail=str(e))]}
         if needs_approval(impact, settings.risk):
-            # M3: route to `approve` here instead of holding.
-            return {"decision": "next", "op_index": i + 1,
-                    "audit": [AuditEntry(action="held", op_index=i, op=op, impact=impact,
-                                         detail="exceeds risk policy; not applied without approval")]}
+            return {"decision": "approve"}
         return {"decision": "apply"}
+
+    def approve(state: State) -> State:
+        """Pause for a person. LangGraph re-runs this node from the top on
+        resume, so everything before ``interrupt()`` only reads."""
+        i, ops = state["op_index"], state["plan"].ops
+        impact = assess(load_frame(Path(state["current_path"])), ops[i])
+        answer = interrupt(ApprovalRequest(op_index=i, op=ops[i], impact=impact),
+                           response_schema=ApprovalDecision)
+        if answer.action == "approve":
+            return {"decision": "apply",
+                    "audit": [AuditEntry(action="approved", op_index=i, op=ops[i], impact=impact,
+                                         detail=answer.note)]}
+        if answer.action == "reject":
+            return {"decision": "next", "op_index": i + 1,
+                    "audit": [AuditEntry(action="rejected", op_index=i, op=ops[i], impact=impact,
+                                         detail=answer.note)]}
+        new_ops = [*ops[:i], answer.op, *ops[i + 1:]]
+        return {"decision": "next", "plan": CleaningPlan(ops=new_ops),
+                "audit": [AuditEntry(action="edited", op_index=i, op=answer.op,
+                                     detail=answer.note or f"replaced {ops[i].op}")]}
 
     def apply(state: State) -> State:
         """Apply ``plan.ops[op_index]``. The output file is named by a hash of
@@ -162,6 +214,7 @@ def build_graph(
     builder.add_node("profile", profile_node)
     builder.add_node("plan", plan)
     builder.add_node("route", route)
+    builder.add_node("approve", approve)
     builder.add_node("apply", apply)
     builder.add_node("finish", finish)
 
@@ -172,7 +225,11 @@ def build_graph(
         "plan", lambda s: "finish" if s.get("status") == "failed" else "route", ["route", "finish"]
     )
     builder.add_conditional_edges(
-        "route", lambda s: s["decision"], {"apply": "apply", "next": "route", "done": "finish"}
+        "route", lambda s: s["decision"],
+        {"apply": "apply", "approve": "approve", "next": "route", "done": "finish"},
+    )
+    builder.add_conditional_edges(
+        "approve", lambda s: s["decision"], {"apply": "apply", "next": "route"}
     )
     builder.add_edge("apply", "route")
     builder.add_edge("finish", END)
