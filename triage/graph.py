@@ -5,6 +5,10 @@ pauses the run with ``interrupt()`` until a person approves, rejects, or edits
 it. Validation and replanning (M5) are not wired in yet, so a run ends at
 ``finish`` once every op has been routed.
 
+``open_checkpointer`` gives the durable SQLite saver the CLI uses: a run
+stopped at an approval, or killed mid-node, continues from its last
+checkpoint in a new process.
+
 Frames never enter graph state. Each node reads the frame at ``current_path``
 and ``apply`` writes a new file, so checkpoints hold only paths and small
 pydantic models.
@@ -13,6 +17,9 @@ pydantic models.
 import hashlib
 import operator
 import re
+import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypedDict, get_args
 
@@ -20,6 +27,7 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
@@ -97,6 +105,16 @@ def make_serde() -> JsonPlusSerializer:
     return JsonPlusSerializer(allowed_msgpack_modules=STATE_TYPES)
 
 
+@contextmanager
+def open_checkpointer(db: Path) -> Iterator[SqliteSaver]:
+    """A durable checkpointer at ``db``, closed on exit. LangGraph may call it
+    from worker threads, hence ``check_same_thread=False``; SqliteSaver
+    serialises access with its own lock."""
+    db.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(db, check_same_thread=False)) as conn:
+        yield SqliteSaver(conn, serde=make_serde())
+
+
 def check_thread_id(thread_id: str) -> str:
     """The thread id names a directory under ``runs_dir``, so it must be a
     plain name: no separators, no leading dot."""
@@ -115,7 +133,8 @@ def build_graph(
     checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """Compile the graph. ``planner`` defaults to the configured Ollama model;
-    tests pass a fake. ``checkpointer`` defaults to an in-memory saver."""
+    tests pass a fake. ``checkpointer`` defaults to an in-memory saver; pass
+    one from ``open_checkpointer`` for runs that outlive the process."""
     planner = planner if planner is not None else make_planner(settings.model)
 
     def load(state: State, config: RunnableConfig) -> State:
@@ -184,13 +203,16 @@ def build_graph(
 
     def apply(state: State) -> State:
         """Apply ``plan.ops[op_index]``. The output file is named by a hash of
-        its input path and the op, so a re-run reuses it and a fork that picks
-        a different op writes a different file rather than reading a stale one."""
+        the input file's bytes and the op, so a re-run (say, after a crash)
+        reuses it, while a fork that picks a different op, or a reused thread
+        id whose ``step_000`` came from another CSV, gets a different file
+        rather than a stale one."""
         i = state["op_index"]
         op = state["plan"].ops[i]
         src = Path(state["current_path"])
-        key = hashlib.sha256(f"{src}\n{op.model_dump_json()}".encode()).hexdigest()[:16]
-        out = Path(state["run_dir"]) / f"step_{i + 1:03d}_{key}.pkl"
+        digest = hashlib.sha256(src.read_bytes())
+        digest.update(op.model_dump_json().encode())
+        out = Path(state["run_dir"]) / f"step_{i + 1:03d}_{digest.hexdigest()[:16]}.pkl"
         before = load_frame(src)
         if out.exists():
             after = load_frame(out)
