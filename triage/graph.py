@@ -15,10 +15,14 @@ checkpoint in a new process.
 
 Frames never enter graph state. Each node reads the frame at ``current_path``
 and ``apply`` writes a new file, so checkpoints hold only paths and small
-pydantic models.
+pydantic models. Every file under ``run_dir`` is named by a hash of its
+content's inputs, so a fork (``triage.cli fork``) that re-runs a node on a
+branch of the same thread writes new files and never replaces one another
+branch still points at.
 """
 
 import hashlib
+import json
 import operator
 import re
 import sqlite3
@@ -196,9 +200,15 @@ def build_graph(
     planner = planner if planner is not None else make_planner(settings.model)
 
     def load(state: State, config: RunnableConfig) -> State:
+        """Read the CSV into ``step_000_<key>.pkl``, keyed on the file's bytes
+        and the load settings: a fork that re-runs ``load`` after the CSV
+        changed must not replace the frame the original branch starts from."""
         run_dir = settings.runs_dir / check_thread_id(config["configurable"]["thread_id"])
-        df = load_csv(Path(state["input_path"]), settings.csv_na_values)
-        path = run_dir / "step_000.pkl"
+        src = Path(state["input_path"])
+        df = load_csv(src, settings.csv_na_values)
+        key = hashlib.sha256(src.read_bytes())
+        key.update(json.dumps(settings.csv_na_values).encode())
+        path = run_dir / f"step_000_{key.hexdigest()[:16]}.pkl"
         save_frame(df, path)
         return {
             "run_dir": str(run_dir), "start_path": str(path), "current_path": str(path),
@@ -286,9 +296,8 @@ def build_graph(
     def apply(state: State) -> State:
         """Apply ``plan.ops[op_index]``. The output file is named by ``op_key``,
         so a re-run (say, after a crash) or a replan that repeats the op reuses
-        it, while a fork that picks a different op, or a reused thread id whose
-        ``step_000`` came from another CSV, gets a different file rather than a
-        stale one."""
+        it, while a fork that picks a different op, or a reused thread id on
+        another CSV, gets a different file rather than a stale one."""
         i = state["op_index"]
         op = state["plan"].ops[i]
         src = Path(state["current_path"])
@@ -323,8 +332,12 @@ def build_graph(
     def finish(state: State) -> State:
         if state.get("status") == "failed":
             return {"audit": [AuditEntry(action="finished", detail=f"failed: {state['last_error']}")]}
-        out = Path(state["run_dir"]) / "cleaned.csv"
-        load_frame(Path(state["current_path"])).to_csv(out, index=False)
+        # Named by the final frame, so two branches of a thread that end
+        # differently do not overwrite each other's output.
+        src = Path(state["current_path"])
+        key = hashlib.sha256(src.read_bytes()).hexdigest()[:16]
+        out = Path(state["run_dir"]) / f"cleaned_{key}.csv"
+        load_frame(src).to_csv(out, index=False)
         return {"status": "done", "output_path": str(out),
                 "audit": [AuditEntry(action="finished", detail=str(out))]}
 

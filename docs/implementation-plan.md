@@ -24,7 +24,7 @@ README contrasts the two choices.
 | M3 | 5 | Human approval via `interrupt()`, CLI | Done |
 | M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Done |
 | M5 | 8 | Validation node and bounded replan loop | Done |
-| M6 | 9 | Replay from earlier checkpoints | Planned |
+| M6 | 9 | Replay from earlier checkpoints | Done |
 | M7 | 10 | Evaluation on synthetic fixtures | Planned |
 | M8 | 10 | README, graph diagram, LangGraph-vs-hand-written write-up | Planned |
 
@@ -258,12 +258,72 @@ reuse.) A rerun of seed 3 after both did not reproduce the cut-off: the same
 prompt at temperature 0 gave a different 8-op plan, which validated first
 time (36 s), so MLX output is not run-to-run deterministic.
 
-### M6: replay
+### M6: replay (done)
 
 - `uv run python -m triage.cli history --thread <id>` lists checkpoints from
   `graph.get_state_history(config)`.
 - `... fork --thread <id> --checkpoint <cid>` resumes from an earlier
   checkpoint so a different approval decision can be tried.
+
+**Result (2026-10-05): built.** `history` and `fork` in `triage/cli.py`.
+Differences from the list above, on purpose:
+
+- **A fork is a branch of the same thread, not a new thread.** That is
+  LangGraph's own time travel: the fork's checkpoints have the old one as
+  parent and are the newest, so `resume` and `history` follow the fork, and
+  the old branch stays in `history`. Copying a checkpoint chain into a new
+  thread id would keep each thread linear, but needs writes straight into
+  the checkpointer's tables (checkpoints and pending writes) that LangGraph
+  does not offer as an API.
+- **`fork` streams `None` at the old checkpoint, never
+  `Command(resume=...)`.** Checked against langgraph 1.2.12
+  (`pregel/_loop.py`, "time traveling"): `None` with a `checkpoint_id` saves
+  a fork checkpoint and drops the old `__resume__` writes, so the approval is
+  asked again. A resume command at the same checkpoint counts as resuming,
+  keeps the old answer's writes, and ignores the new answer: rejecting there
+  still logs `approved`. A test pins this so an upgrade that changes it is
+  seen.
+- **Output and loaded-frame files are now content-keyed**, like the step
+  files. `finish` writes `cleaned_<hash of final frame>.csv` instead of
+  `cleaned.csv`, which a fork overwrote, leaving the old branch's
+  `output_path` pointing at the fork's data. `load` writes
+  `step_000_<hash of CSV bytes and csv_na_values>.pkl`, so a fork from
+  before `load` after the CSV changed does not replace the frame the old
+  branch replans from.
+- `fork` refuses a checkpoint with nothing left to run: streaming from it
+  still writes an empty fork checkpoint, which `resume` would then treat as
+  the thread's end. Unknown checkpoint ids are refused too (LangGraph returns
+  an empty snapshot, not an error).
+- `history` prints each checkpoint's step, id, next node, and what that step
+  added to the audit log, the approval it asked for, or the checkpoint it
+  forked from. `*` marks the branch `resume` continues. All checkpoints are
+  listed (27 for the 7-op live run below); ids are given in full.
+- A fork after the planner reruns `plan`, so it is one more model call, and
+  the CLI says so.
+- Not handled: a reused decision (M5) is part of the state at later
+  checkpoints, so to change one, fork at the approval where it was first
+  given, not at the replan that reused it. Forking a thread that another
+  process is waiting on (M4's two-processes caveat) is not detected.
+
+Evidence: `uv run pytest -q` gives 89 passed, 2 deselected (7 new in
+`tests/test_replay.py`, SQLite checkpointer, fake planner): a fork at an
+approval asks again, records the new answer, and leaves the old branch's
+output file unchanged; `Command(resume=...)` at an old checkpoint keeps the
+old answer; unknown and final checkpoints are refused without writing a
+checkpoint; a fork stopped at its prompt is continued by `resume` on the fork
+branch; a fork before `plan` gets a new plan; a fork from `load` after the
+CSV changed leaves the old branch's loaded frame alone; `main` wiring. Each
+of these fails if its mechanism is undone (fixed output name, fixed
+`step_000` name, no final-checkpoint guard, the fork's checkpoint id kept
+past the first stream, `Command(resume=...)` at the old checkpoint). Graph,
+CLI, durable, validate, planner and replay tests also pass with
+`LANGGRAPH_STRICT_MSGPACK=true` and `-W error`; ruff clean. Live
+(`qwen3.5:9b-mlx`, seed 0): `run` with `yes a` planned 7 ops in 16.3 s,
+approved 5, `done` (180 rows). `history` listed 27 checkpoints. `fork` at
+approval #4 (`filter_rows` dropping 9 rows with no region), answered reject,
+then approve for #5 and #6: 0.9 s, no model call, `done` with 189 rows and
+the 9 rows kept; both `cleaned_*.csv` files exist, and `history` shows 38
+checkpoints with the fork marked as the current branch.
 
 ### M7: evaluation
 
