@@ -7,8 +7,10 @@ routing, `triage/graph.py`), M3 (`approve` node with `interrupt()`, and
 `triage.cli run`), and M4 (`SqliteSaver`, `triage.cli resume`,
 `triage.crash_demo`), M5 (`validate` node, `triage/validate.py`, bounded
 replan), M6 (`triage.cli history` and `fork`, content-keyed run files), and
-M7 (`triage.evaluate`, scripted approvers, scored live runs) are built and
-tested. The M8 write-up is planned. Do not describe planned parts
+M7 (`triage.evaluate`, scripted approvers, scored live runs), and M8
+(README write-up, `triage.writeup`, `docs/demo.md`) are built and tested.
+Regenerate the README diagram with `uv run python -m triage.writeup mermaid`
+after changing graph edges; a test checks it. Do not describe planned parts
 as implemented. Update milestone status in `docs/implementation-plan.md` with
 evidence (the command and its result) as work lands.
 
@@ -45,9 +47,10 @@ uv run python -m triage.faults --out fixtures --seeds 0 1 2
 
 ## Documentation map
 
-- `README.md`: scope, status, setup.
+- `README.md`: scope, status, demo, evaluation table, LangGraph write-up, setup.
 - `docs/implementation-plan.md`: milestones, decisions, versions.
 - `docs/architecture.md`: graph, state, modules, ops, trust boundary.
 - `docs/evaluation-plan.md`: fixtures, scoring, metrics.
+- `docs/demo.md`: recorded run (`uv run python -m triage.writeup demo`).
 
 `AGENTS.md` points here; keep shared guidance in this file.
