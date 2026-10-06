@@ -5,8 +5,9 @@
 Milestones M1 (deterministic parts), M2 (graph with planner and risk
 routing, `triage/graph.py`), M3 (`approve` node with `interrupt()`, and
 `triage.cli run`), and M4 (`SqliteSaver`, `triage.cli resume`,
-`triage.crash_demo`) are built and tested. The CLI's history/fork commands,
-validation, and evaluation are planned. Do not describe planned parts
+`triage.crash_demo`), and M5 (`validate` node, `triage/validate.py`, bounded
+replan) are built and tested. The CLI's history/fork commands and evaluation
+are planned. Do not describe planned parts
 as implemented. Update milestone status in `docs/implementation-plan.md` with
 evidence (the command and its result) as work lands.
 

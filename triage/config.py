@@ -22,6 +22,10 @@ class ModelConfig(BaseModel):
     # done_reason=length instead of running until the timeout.
     num_predict: int | None = 4096
     timeout_s: float = 600.0
+    # Longest planner error kept for the audit log and fed back on a retry.
+    # The parser's own message embeds the whole completion (4 KB when a reply
+    # was cut off), which floods the terminal and the retry prompt.
+    max_error_chars: int = Field(default=500, ge=50)
 
 
 class RiskPolicy(BaseModel):
@@ -35,6 +39,21 @@ class RiskPolicy(BaseModel):
     max_rows_removed: int = Field(default=0, ge=0)
     max_columns_removed: int = Field(default=0, ge=0)
     max_values_nulled: int = Field(default=0, ge=0)
+    # Within a run, reuse a person's approve/reject for the same op (ignoring
+    # its reason) on the same input bytes, e.g. when a replan proposes it
+    # again. Same bytes and parameters give the same impact, so the person
+    # would be answering an identical question.
+    reuse_decisions: bool = True
+
+
+class ValidationPolicy(BaseModel):
+    """Checks on a finished run's output; a failure sends the run back to the
+    planner, up to ``Settings.max_plan_retries`` times."""
+
+    # Cumulative, over all ops, which a person approving one op at a time does
+    # not see. The fixtures lose about 15% of rows to dedupe plus the
+    # impossible-quantity filter.
+    max_rows_removed_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
 
 
 class ProfilerConfig(BaseModel):
@@ -50,10 +69,12 @@ class Settings(BaseSettings):
 
     model: ModelConfig = ModelConfig()
     risk: RiskPolicy = RiskPolicy()
+    validation: ValidationPolicy = ValidationPolicy()
     profiler: ProfilerConfig = ProfilerConfig()
     # Cell values read as null on load. pandas' default list would hide markers
     # like 'N/A' before the agent ever sees them.
     csv_na_values: list[str] = [""]
+    # Extra planner calls after a plan fails to parse or fails validation.
     max_plan_retries: int = Field(default=2, ge=0)
     checkpoint_db: Path = Path("runs/checkpoints.sqlite")
     # Each run writes its intermediate frames and output to runs_dir/<thread_id>.

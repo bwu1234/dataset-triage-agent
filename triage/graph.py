@@ -1,9 +1,13 @@
-"""The triage graph: load, profile, plan, then route each op to apply or approve.
+"""The triage graph: load, profile, plan, route each op to apply or approve,
+then validate the output.
 
 An op whose measured impact exceeds ``RiskPolicy`` goes to ``approve``, which
 pauses the run with ``interrupt()`` until a person approves, rejects, or edits
-it. Validation and replanning (M5) are not wired in yet, so a run ends at
-``finish`` once every op has been routed.
+it. Once every op is routed, ``validate`` checks the output
+(``triage.validate``). On failure the run goes back to ``plan`` with the
+failures as feedback, up to ``max_plan_retries`` times; a replan starts again
+from the loaded file, because ops already applied cannot be undone by adding
+more.
 
 ``open_checkpointer`` gives the durable SQLite saver the CLI uses: a run
 stopped at an approval, or killed mid-node, continues from its last
@@ -40,11 +44,12 @@ from triage.io import load_csv, load_frame, save_frame
 from triage.ops import AnyOp, CleaningPlan, Op
 from triage.planner import make_planner, plan_once
 from triage.profile import ColumnProfile, DatasetProfile, profile
+from triage.validate import check_output
 
 
 class AuditEntry(BaseModel):
     action: Literal["loaded", "planned", "plan_failed", "applied", "skipped", "approved",
-                    "rejected", "edited", "finished"]
+                    "rejected", "edited", "validated", "invalid", "finished"]
     op_index: int | None = None
     op: Op | None = None
     impact: Impact | None = None
@@ -77,17 +82,25 @@ class ApprovalDecision(BaseModel):
 class State(TypedDict, total=False):
     input_path: str
     run_dir: str
+    # The loaded frame; every plan attempt starts from it.
+    start_path: str
     current_path: str
     profile: DatasetProfile
     plan: CleaningPlan
     op_index: int
-    # Set by ``route`` for the conditional edge that follows it.
-    decision: Literal["apply", "approve", "next", "done"]
+    # Set by ``plan``, ``route``, ``approve`` and ``validate`` for the
+    # conditional edge that follows each.
+    decision: Literal["route", "replan", "apply", "approve", "next", "done"]
     # ``operator.add`` is the reducer: nodes return new entries and LangGraph
     # appends them, instead of each node rewriting the whole list.
     audit: Annotated[list[AuditEntry], operator.add]
+    # Planner calls after the first, for parse or validation failures.
     retries: int
+    # Why the last plan failed; the next plan call gets it as feedback.
     last_error: str | None
+    # A person's answers by ``op_key``, reused when the same op meets the same
+    # data again (``RiskPolicy.reuse_decisions``).
+    decisions: dict[str, Literal["approve", "reject"]]
     status: Literal["running", "done", "failed"]
     output_path: str
 
@@ -127,6 +140,51 @@ def run_config(thread_id: str) -> RunnableConfig:
     return {"configurable": {"thread_id": thread_id}}
 
 
+def op_key(src: Path, op: AnyOp) -> str:
+    """Identifies "this op on this data": the input file's bytes and the op
+    without its ``reason``, which is the model's commentary and does not change
+    what the op does. Names step files and keys reused decisions."""
+    digest = hashlib.sha256(src.read_bytes())
+    digest.update(op.model_dump_json(exclude={"reason"}).encode())
+    return digest.hexdigest()[:16]
+
+
+def this_attempt(audit: list[AuditEntry]) -> list[AuditEntry]:
+    """Entries after the latest ``planned`` one: what happened to the current plan."""
+    starts = [i for i, e in enumerate(audit) if e.action == "planned"]
+    return audit[starts[-1] + 1:] if starts else []
+
+
+def _outcomes(entries: list[AuditEntry]) -> tuple[dict[int, str], set[int], dict[str, int]]:
+    """Skipped ops with their errors, rejected op indexes, and values nulled per
+    column by applied ops. An edited op keeps its index, so the last entry for
+    an index is its outcome."""
+    final: dict[int, AuditEntry] = {}
+    nulled: dict[str, int] = {}
+    for e in entries:
+        if e.op_index is not None and e.action in ("applied", "rejected", "skipped"):
+            final[e.op_index] = e
+        column = getattr(e.op, "column", None)
+        if e.action == "applied" and column is not None and e.impact is not None:
+            nulled[column] = nulled.get(column, 0) + e.impact.values_nulled
+    skipped = {i: e.detail or "" for i, e in final.items() if e.action == "skipped"}
+    rejected = {i for i, e in final.items() if e.action == "rejected"}
+    return skipped, rejected, nulled
+
+
+def _feedback(state: State) -> str:
+    """What the planner is told after a failed attempt."""
+    parts = []
+    if "plan" in state:
+        parts.append(f"Previous plan: {state['plan'].model_dump_json()}")
+    parts.append(f"What went wrong:\n{state['last_error']}")
+    rejected = [e.op for e in this_attempt(state["audit"]) if e.action == "rejected"]
+    if rejected:
+        parts.append("A person rejected these ops:\n"
+                     + "\n".join(op.model_dump_json() for op in rejected))
+    return "\n\n".join(parts)
+
+
 def build_graph(
     settings: Settings,
     planner: Runnable[Any, dict[str, Any]] | None = None,
@@ -143,7 +201,8 @@ def build_graph(
         path = run_dir / "step_000.pkl"
         save_frame(df, path)
         return {
-            "run_dir": str(run_dir), "current_path": str(path), "op_index": 0, "retries": 0,
+            "run_dir": str(run_dir), "start_path": str(path), "current_path": str(path),
+            "op_index": 0, "retries": 0,
             "last_error": None, "status": "running",
             "audit": [AuditEntry(action="loaded", detail=f"{len(df)} rows, {len(df.columns)} columns")],
         }
@@ -153,16 +212,25 @@ def build_graph(
         return {"profile": profile(df, settings.profiler)}
 
     def plan(state: State) -> State:
-        attempt = plan_once(planner, state["profile"])
+        """Ask for a plan, with feedback if an earlier one failed. A new plan
+        starts again from the loaded file."""
+        retries = state.get("retries", 0)
+        feedback = _feedback(state) if state.get("last_error") else None
+        attempt = plan_once(planner, state["profile"], feedback,
+                            max_error_chars=settings.model.max_error_chars)
         if attempt.plan is None:
-            return {
-                "status": "failed", "last_error": attempt.error,
-                "audit": [AuditEntry(action="plan_failed", detail=attempt.error)],
-            }
+            failed = AuditEntry(action="plan_failed", detail=attempt.error)
+            if retries < settings.max_plan_retries:
+                return {"decision": "replan", "retries": retries + 1, "last_error": attempt.error,
+                        "audit": [failed]}
+            return {"decision": "done", "status": "failed", "last_error": attempt.error,
+                    "audit": [failed]}
         return {
-            "plan": attempt.plan, "op_index": 0, "last_error": None,
+            "decision": "route", "plan": attempt.plan, "op_index": 0,
+            "current_path": state["start_path"], "last_error": None,
             "audit": [AuditEntry(action="planned",
-                                 detail=f"{len(attempt.plan.ops)} ops in {attempt.seconds:.1f}s")],
+                                 detail=f"{len(attempt.plan.ops)} ops in {attempt.seconds:.1f}s, "
+                                        f"attempt {retries + 1}")],
         }
 
     def route(state: State) -> State:
@@ -177,23 +245,37 @@ def build_graph(
         except OpError as e:
             return {"decision": "next", "op_index": i + 1,
                     "audit": [AuditEntry(action="skipped", op_index=i, op=op, detail=str(e))]}
-        if needs_approval(impact, settings.risk):
-            return {"decision": "approve"}
-        return {"decision": "apply"}
+        if not needs_approval(impact, settings.risk):
+            return {"decision": "apply"}
+        earlier = None
+        if settings.risk.reuse_decisions:
+            earlier = state.get("decisions", {}).get(op_key(Path(state["current_path"]), op))
+        if earlier == "approve":
+            return {"decision": "apply",
+                    "audit": [AuditEntry(action="approved", op_index=i, op=op, impact=impact,
+                                         detail="reused: approved earlier on the same data")]}
+        if earlier == "reject":
+            return {"decision": "next", "op_index": i + 1,
+                    "audit": [AuditEntry(action="rejected", op_index=i, op=op, impact=impact,
+                                         detail="reused: rejected earlier on the same data")]}
+        return {"decision": "approve"}
 
     def approve(state: State) -> State:
         """Pause for a person. LangGraph re-runs this node from the top on
         resume, so everything before ``interrupt()`` only reads."""
         i, ops = state["op_index"], state["plan"].ops
-        impact = assess(load_frame(Path(state["current_path"])), ops[i])
+        src = Path(state["current_path"])
+        impact = assess(load_frame(src), ops[i])
         answer = interrupt(ApprovalRequest(op_index=i, op=ops[i], impact=impact),
                            response_schema=ApprovalDecision)
+        if answer.action in ("approve", "reject"):
+            decisions = {**state.get("decisions", {}), op_key(src, ops[i]): answer.action}
         if answer.action == "approve":
-            return {"decision": "apply",
+            return {"decision": "apply", "decisions": decisions,
                     "audit": [AuditEntry(action="approved", op_index=i, op=ops[i], impact=impact,
                                          detail=answer.note)]}
         if answer.action == "reject":
-            return {"decision": "next", "op_index": i + 1,
+            return {"decision": "next", "op_index": i + 1, "decisions": decisions,
                     "audit": [AuditEntry(action="rejected", op_index=i, op=ops[i], impact=impact,
                                          detail=answer.note)]}
         new_ops = [*ops[:i], answer.op, *ops[i + 1:]]
@@ -202,17 +284,15 @@ def build_graph(
                                      detail=answer.note or f"replaced {ops[i].op}")]}
 
     def apply(state: State) -> State:
-        """Apply ``plan.ops[op_index]``. The output file is named by a hash of
-        the input file's bytes and the op, so a re-run (say, after a crash)
-        reuses it, while a fork that picks a different op, or a reused thread
-        id whose ``step_000`` came from another CSV, gets a different file
-        rather than a stale one."""
+        """Apply ``plan.ops[op_index]``. The output file is named by ``op_key``,
+        so a re-run (say, after a crash) or a replan that repeats the op reuses
+        it, while a fork that picks a different op, or a reused thread id whose
+        ``step_000`` came from another CSV, gets a different file rather than a
+        stale one."""
         i = state["op_index"]
         op = state["plan"].ops[i]
         src = Path(state["current_path"])
-        digest = hashlib.sha256(src.read_bytes())
-        digest.update(op.model_dump_json().encode())
-        out = Path(state["run_dir"]) / f"step_{i + 1:03d}_{digest.hexdigest()[:16]}.pkl"
+        out = Path(state["run_dir"]) / f"step_{i + 1:03d}_{op_key(src, op)}.pkl"
         before = load_frame(src)
         if out.exists():
             after = load_frame(out)
@@ -222,6 +302,23 @@ def build_graph(
         return {"current_path": str(out), "op_index": i + 1,
                 "audit": [AuditEntry(action="applied", op_index=i, op=op,
                                      impact=measure(before, after))]}
+
+    def validate(state: State) -> State:
+        """Check the output against the loaded file. Reads only."""
+        skipped, rejected, nulled = _outcomes(this_attempt(state["audit"]))
+        failures = check_output(
+            load_frame(Path(state["start_path"])), load_frame(Path(state["current_path"])),
+            state["plan"].ops, skipped, rejected, nulled, settings.validation,
+        )
+        if not failures:
+            return {"decision": "done", "audit": [AuditEntry(action="validated")]}
+        text = "\n".join(failures)
+        invalid = AuditEntry(action="invalid", detail="; ".join(failures))
+        retries = state.get("retries", 0)
+        if retries < settings.max_plan_retries:
+            return {"decision": "replan", "retries": retries + 1, "last_error": text,
+                    "audit": [invalid]}
+        return {"decision": "done", "status": "failed", "last_error": text, "audit": [invalid]}
 
     def finish(state: State) -> State:
         if state.get("status") == "failed":
@@ -238,22 +335,26 @@ def build_graph(
     builder.add_node("route", route)
     builder.add_node("approve", approve)
     builder.add_node("apply", apply)
+    builder.add_node("validate", validate)
     builder.add_node("finish", finish)
 
     builder.add_edge(START, "load")
     builder.add_edge("load", "profile")
     builder.add_edge("profile", "plan")
     builder.add_conditional_edges(
-        "plan", lambda s: "finish" if s.get("status") == "failed" else "route", ["route", "finish"]
+        "plan", lambda s: s["decision"], {"route": "route", "replan": "plan", "done": "finish"}
     )
     builder.add_conditional_edges(
         "route", lambda s: s["decision"],
-        {"apply": "apply", "approve": "approve", "next": "route", "done": "finish"},
+        {"apply": "apply", "approve": "approve", "next": "route", "done": "validate"},
     )
     builder.add_conditional_edges(
         "approve", lambda s: s["decision"], {"apply": "apply", "next": "route"}
     )
     builder.add_edge("apply", "route")
+    builder.add_conditional_edges(
+        "validate", lambda s: s["decision"], {"replan": "plan", "done": "finish"}
+    )
     builder.add_edge("finish", END)
 
     return builder.compile(checkpointer=checkpointer or InMemorySaver(serde=make_serde()))

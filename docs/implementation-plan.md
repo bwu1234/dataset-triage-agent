@@ -23,7 +23,7 @@ README contrasts the two choices.
 | M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | Done |
 | M3 | 5 | Human approval via `interrupt()`, CLI | Done |
 | M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Done |
-| M5 | 8 | Validation node and bounded replan loop | Planned |
+| M5 | 8 | Validation node and bounded replan loop | Done |
 | M6 | 9 | Replay from earlier checkpoints | Planned |
 | M7 | 10 | Evaluation on synthetic fixtures | Planned |
 | M8 | 10 | README, graph diagram, LangGraph-vs-hand-written write-up | Planned |
@@ -181,13 +181,82 @@ SIGKILLed at approval #1, the second process resumed at `approve`, approved
 Separately, Ctrl-C during planning exits 130 and `resume` re-runs `plan`,
 then finishes with status `done`.
 
-### M5: validation and replanning
+### M5: validation and replanning (done)
 
 - `validate` re-profiles the output and checks invariants: rows removed within
   a configured fraction, no column with more nulls than before unless an
   approved op caused it, and the plan's target dtypes reached.
 - On failure, route back to `plan` with the failure text, up to
   `max_plan_retries`; then finish with status `failed`.
+
+**Result (2026-10-05): built.** `validate` node in `triage/graph.py`, checks
+in `triage/validate.py`, `ValidationPolicy` in `triage/config.py`.
+Differences from the list above, on purpose:
+
+- **A replan starts again from the loaded file (`step_000`)**, not from the
+  failed attempt's output. Two of the invariants (rows removed, unexplained
+  nulls) are caused by ops already applied, and adding ops cannot undo them.
+  Its cost, asking the person again, is mostly removed by reusing decisions
+  (below).
+- **A person's approve/reject is reused within a run** for the same op on
+  the same input bytes (`op_key`: file bytes plus the op without `reason`,
+  which the model rewrites on every attempt). Same bytes and parameters give
+  the same measured impact, so it is the same question. Reused entries say
+  so in the audit log; edits are not reused (the replacement is routed on
+  its own). `RiskPolicy.reuse_decisions=false` turns it off. Step files use
+  the same key, so a reworded op also reuses its file. A person who wants to
+  change an answer needs a new run, or a fork once M6 exists.
+- **An op skipped with `OpError` fails validation.** That is the failure the
+  M2 gate saw (op order), and this loop is what fixes it.
+- Rows removed is cumulative (`max_rows_removed_fraction`, default 0.25). A
+  person approves one op at a time and never sees the total.
+- The null check compares each column's new nulls with the
+  `values_nulled` of applied ops on that column. `route` already gates each
+  op, so this only fires if an op nulls values outside its own column: a
+  cross-check on the audit log, not a quality check. It reads frames
+  directly; no re-profile is needed.
+- A cast is checked only if it was applied (not rejected by a person, not
+  skipped); the failure is a later op undoing it, e.g. a text constant
+  imputed into a datetime column turns it into `object`.
+- Feedback to the planner: the previous plan, the failures, and the ops a
+  person rejected (with "do not re-propose"), fenced as untrusted data like
+  the profile.
+- **Planner parse and transport failures share the `max_plan_retries`
+  budget** and are retried with the error as feedback, instead of ending the
+  run.
+- **Planner errors are summarised, not quoted.** LangChain's parse error
+  embeds the whole completion (about 4 KB on seed 3 below), which then went to
+  the audit log, the terminal and the retry prompt. `plan_once` now uses the
+  wrapped pydantic/JSON error (`__cause__`), adds a "cut off at the token
+  limit, keep reasons short" note when Ollama reports `done_reason=length`,
+  and caps the text at `ModelConfig.max_error_chars` (500). The full reply
+  stays in `PlanAttempt.raw_content`.
+- Out of retries, the run finishes `failed` without `cleaned.csv`. The last
+  frame stays in `runs/<thread>/`.
+- Executor fix found on the way: `impute(constant)` with a text value on a
+  `Float64`/`Int64` column raised a raw `TypeError`, which `route` does not
+  catch, so the run crashed instead of skipping the op. It now raises
+  `OpError`.
+
+Evidence: `uv run pytest -q` gives 82 passed, 2 deselected. New tests:
+`tests/test_validate.py` (5, one per check), 8 in `tests/test_graph.py`
+(replan restarts from the loaded file with feedback, rejected ops named in
+feedback, retries exhausted, parse failure retried, decision reuse for a
+reworded op but not for other bytes or with reuse off, reused rejection),
+2 in `tests/test_planner.py` (the seed-3 cut-off reply through LangChain's
+real `PydanticOutputParser`, the cap), 1 in `tests/test_cli.py`, 1 in
+`tests/test_executor.py`. Putting `reason` back into `op_key` fails both
+reuse tests. Graph, CLI, durable, validate and planner tests also pass with `LANGGRAPH_STRICT_MSGPACK=true`
+and `-W error`; ruff clean. Live (`qwen3.5:9b-mlx`, seeds 0–4, `yes a`
+piped to `triage.cli run`): 5/5 `done`. Seeds 0, 1, 2 and 4 validated on
+the first plan. Seed 3's first call ran into `num_predict` mid-`reason`
+and returned truncated JSON (`plan_failed`); the retry validated. No
+validation-driven replan happened live: the op-order errors from the M2
+gate did not recur on these seeds, so that path is covered by the
+fake-planner tests only. (These runs predate the error summary and decision
+reuse.) A rerun of seed 3 after both did not reproduce the cut-off: the same
+prompt at temperature 0 gave a different 8-op plan, which validated first
+time (36 s), so MLX output is not run-to-run deterministic.
 
 ### M6: replay
 
