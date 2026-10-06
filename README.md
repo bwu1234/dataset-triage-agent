@@ -10,10 +10,10 @@ locally on Ollama, on synthetic data.
 
 Early. The deterministic parts are built and tested: op schema, executor,
 impact measurement, profiler, and synthetic fault fixtures (milestone M1).
-The planner and the graph (load, profile, plan, route, apply, finish) are
-built. Ops whose measured impact exceeds the risk policy are held, not
-applied, until the approval flow lands. Approval, CLI, durable runs, and
-validation are planned, not built. See
+The planner, the graph, and human approval are built: ops whose measured
+impact exceeds the risk policy pause the run for a person to approve, reject,
+or edit, via `uv run python -m triage.cli run <csv> --thread <id>`. Runs are
+in memory only; durable runs, replay, and validation are planned, not built. See
 [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Design in one paragraph

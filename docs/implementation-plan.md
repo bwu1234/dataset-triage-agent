@@ -21,7 +21,7 @@ README contrasts the two choices.
 |---|---|---|---|
 | M1 | 1–2 | Op schema, profiler, executor, impact measurement, fault generator, offline tests | Done |
 | M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | Done |
-| M3 | 5 | Human approval via `interrupt()`, CLI | Planned |
+| M3 | 5 | Human approval via `interrupt()`, CLI | Done |
 | M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Planned |
 | M5 | 8 | Validation node and bounded replan loop | Planned |
 | M6 | 9 | Replay from earlier checkpoints | Planned |
@@ -97,7 +97,7 @@ seed 0 with `qwen3.5:9b-mlx` (one-off script, not a test) planned 5 ops in
 14.5 s: 1 applied (`strip_whitespace`), 4 held (two `standardize_missing`,
 `filter_rows`, `dedupe`), status `done`.
 
-### M3: human approval
+### M3: human approval (done)
 
 - An `approve` node calls `interrupt()` with the op, its reason, and its
   measured `Impact`. The resume value is `approve`, `reject`, or `edit` with a
@@ -107,6 +107,30 @@ seed 0 with `qwen3.5:9b-mlx` (one-off script, not a test) planned 5 ops in
   only in `apply`.
 - CLI: `uv run python -m triage.cli run <csv> --thread <id>` streams progress,
   shows each pending approval, and resumes with `Command(resume=...)`.
+
+**Result (2026-10-06): built.** `approve` in `triage/graph.py`,
+`triage/cli.py`. Differences from the list above, on purpose:
+
+- An **edit goes back to `route`, not to `apply`**. The person has not seen
+  the replacement op's impact, so `route` measures it: applied if safe, asked
+  again if still over the policy, skipped if it cannot apply.
+- `interrupt(..., response_schema=ApprovalDecision)` (langgraph 1.2) validates
+  the resume value with pydantic and returns the model; the CLI sends it as
+  plain JSON so it survives any checkpointer.
+- `approve` re-measures impact before `interrupt()` (a read, safe to repeat)
+  rather than carrying it in state from `route`.
+- The CLI escapes control characters in everything it prints (column names,
+  values and model reasons come from the file), and thread ids must be plain
+  names because they become a directory under `runs_dir`.
+- Only `run` exists. With `InMemorySaver` a stopped run cannot be resumed, so
+  `resume` waits for M4.
+
+Evidence: `uv run pytest -q` gives 60 passed, 2 deselected (10 in
+`tests/test_graph.py`, 10 in `tests/test_cli.py`, fake planner, scripted
+answers); those two files also pass with `LANGGRAPH_STRICT_MSGPACK=true` and
+`-W error`; ruff clean. Live (`TRIAGE_MODEL__NAME=qwen3.5:9b-mlx`, seed 0,
+`yes a` piped to `triage.cli run`): 5 ops planned in 41.0 s, 1 applied
+without asking, 4 approved and applied, status `done`.
 
 ### M4: durable runs
 

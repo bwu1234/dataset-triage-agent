@@ -2,10 +2,10 @@
 
 ## Current state
 
-Milestone M1 (deterministic parts) and M2 (graph with planner and risk
-routing, `triage/graph.py`) are built and tested. Under M2, ops over the risk
-policy are held (logged, not applied); the approval flow, CLI, durable runs,
-validation, and evaluation are planned. Do not describe planned parts
+Milestones M1 (deterministic parts), M2 (graph with planner and risk
+routing, `triage/graph.py`), and M3 (`approve` node with `interrupt()`, and
+`triage.cli run`) are built and tested. Durable runs (`SqliteSaver`), the
+CLI's resume/history/fork commands, validation, and evaluation are planned. Do not describe planned parts
 as implemented. Update milestone status in `docs/implementation-plan.md` with
 evidence (the command and its result) as work lands.
 
