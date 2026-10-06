@@ -4,6 +4,7 @@
 index, so ``triage.impact`` can line rows up before and after.
 """
 
+import re
 from functools import singledispatch
 
 import pandas as pd
@@ -69,7 +70,13 @@ def _cast(s: pd.Series, op: CastType) -> pd.Series:
         numeric = numeric.where(numeric.isna() | (numeric % 1 == 0))
         return numeric.astype("Int64")
     if op.to == "datetime":
-        return pd.to_datetime(s, errors="coerce", format=op.datetime_format or "mixed")
+        try:
+            return pd.to_datetime(s, errors="coerce", format=op.datetime_format or "mixed")
+        except (ValueError, re.error) as e:
+            # ``errors="coerce"`` covers values, not the format itself: an
+            # unknown directive raises ValueError, a repeated one ('%Y-%m-%Y')
+            # an invalid regex inside pandas (M7 eval, seeds 5 and 8).
+            raise OpError(f"cast_type: bad datetime_format {op.datetime_format!r}: {e}") from e
     if op.to == "bool":
         lowered = s.astype("string").str.strip().str.lower()
         out = pd.Series(pd.NA, index=s.index, dtype="boolean")

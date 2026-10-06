@@ -6,8 +6,9 @@ Milestones M1 (deterministic parts), M2 (graph with planner and risk
 routing, `triage/graph.py`), M3 (`approve` node with `interrupt()`, and
 `triage.cli run`), and M4 (`SqliteSaver`, `triage.cli resume`,
 `triage.crash_demo`), M5 (`validate` node, `triage/validate.py`, bounded
-replan), and M6 (`triage.cli history` and `fork`, content-keyed run files)
-are built and tested. Evaluation is planned. Do not describe planned parts
+replan), M6 (`triage.cli history` and `fork`, content-keyed run files), and
+M7 (`triage.evaluate`, scripted approvers, scored live runs) are built and
+tested. The M8 write-up is planned. Do not describe planned parts
 as implemented. Update milestone status in `docs/implementation-plan.md` with
 evidence (the command and its result) as work lands.
 
@@ -16,7 +17,8 @@ evidence (the command and its result) as work lands.
 ```
 uv sync                         # install, pinned by uv.lock
 uv run pytest -q                # offline checks; must stay fast and model-free
-uv run pytest -m live           # calls local Ollama (none exist yet)
+uv run pytest -m live           # calls local Ollama
+uv run python -m triage.evaluate --models qwen3.5:9b-mlx qwen3.8:27b-mlx  # ~40 min
 uv run ruff check .
 uv run python -m triage.faults --out fixtures --seeds 0 1 2
 ```

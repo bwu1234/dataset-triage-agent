@@ -56,6 +56,22 @@ class ValidationPolicy(BaseModel):
     max_rows_removed_fraction: float = Field(default=0.25, ge=0.0, le=1.0)
 
 
+class EvaluationConfig(BaseModel):
+    """The scripted approvers in ``triage.evaluate``. The rule-based one
+    stands in for a person who pushes back on large deletions."""
+
+    # Of the rows in the frame the op sees. On seeds 0-9 every single-fault
+    # removal is 7-9% of rows, the wanted ones (dedupe, the negative-quantity
+    # filter) and the unwanted ones (dropping rows with a missing region or
+    # rating) alike, so this only catches a filter that removes more than one
+    # fault's worth.
+    reject_rows_removed_fraction: float = Field(default=0.10, ge=0.0, le=1.0)
+    # Reject ``filter_rows(operator='not_null')``: deleting whole rows because
+    # one value is missing, where a person would rather impute or keep the
+    # null. The size rule above cannot tell these from wanted removals.
+    reject_null_filters: bool = True
+
+
 class ProfilerConfig(BaseModel):
     sample_values: int = Field(default=5, ge=0)
     max_sample_chars: int = Field(default=40, ge=1)
@@ -71,6 +87,7 @@ class Settings(BaseSettings):
     risk: RiskPolicy = RiskPolicy()
     validation: ValidationPolicy = ValidationPolicy()
     profiler: ProfilerConfig = ProfilerConfig()
+    evaluation: EvaluationConfig = EvaluationConfig()
     # Cell values read as null on load. pandas' default list would hide markers
     # like 'N/A' before the agent ever sees them.
     csv_na_values: list[str] = [""]

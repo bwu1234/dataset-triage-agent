@@ -25,7 +25,7 @@ README contrasts the two choices.
 | M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Done |
 | M5 | 8 | Validation node and bounded replan loop | Done |
 | M6 | 9 | Replay from earlier checkpoints | Done |
-| M7 | 10 | Evaluation on synthetic fixtures | Planned |
+| M7 | 10 | Evaluation on synthetic fixtures | Done |
 | M8 | 10 | README, graph diagram, LangGraph-vs-hand-written write-up | Planned |
 
 ### M1: deterministic parts (done)
@@ -325,9 +325,89 @@ then approve for #5 and #6: 0.9 s, no model call, `done` with 189 rows and
 the 9 rows kept; both `cleaned_*.csv` files exist, and `history` shows 38
 checkpoints with the fork marked as the current branch.
 
-### M7: evaluation
+### M7: evaluation (done)
 
 See `docs/evaluation-plan.md`.
+
+**Result (2026-10-06): built.** `triage/evaluate.py`, `EvaluationConfig` in
+`triage/config.py`. Differences from the evaluation plan, on purpose:
+
+- **The rule-based approver also rejects `filter_rows(not_null)`.** Measured
+  on seeds 0–9, every single-fault removal is 7–9% of rows, wanted (dedupe,
+  negative quantities) and unwanted (rows with a missing region or rating)
+  alike, so a size threshold alone cannot separate them and the condition
+  would have matched approve-all. The 0.10 size limit stays.
+- Collateral damage counts distinct clean rows with no copy left in the
+  output, matched by content, so `dedupe(keep='last')` is not counted.
+- Each result row keeps the final plan and the audit log, also for crashed
+  runs, so every score traces back to the ops behind it.
+- Runs use an in-memory checkpointer and have no per-run wall-clock limit;
+  each model call is bounded by `ModelConfig.timeout_s`.
+
+**The first full run found two bugs, fixed here:**
+
+- **The profiler hid missing-value markers.** It reported
+  `missing_token_count` (16 in region) but showed only the first five
+  distinct values, which held one of the three markers. No plan could name
+  the others, so `missing_tokens` was fixed in 0/40 runs. `ColumnProfile`
+  now has `missing_tokens_found`, one spelling per configured token
+  (bounded by `ProfilerConfig.missing_tokens`), and the prompt asks for
+  every one of them.
+- **A bad `datetime_format` crashed the graph** (2/40 runs). A repeated
+  directive (`'%Y-%m-%d %d %b %Y'`) makes pandas raise `re.PatternError`,
+  and an unknown one (`'%Q'`) `ValueError`; `route` catches only `OpError`.
+  The executor now raises `OpError`, so the op is skipped and replanned.
+
+Live, `uv run python -m triage.evaluate --models qwen3.5:9b-mlx
+qwen3.8:27b-mlx --seeds 0 1 2 3 4 5 6 7 8 9`, 40 runs each, `think=False`.
+Before the fixes (`runs/eval/20261006T040025Z`):
+
+| Model | Condition | Done / failed / crashed | Faults fixed | Fully cleaned | Asked | Rejected | Replans | Collateral rows (runs) | Model calls | Median s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen3.5:9b-mlx` | approve all | 10 / 0 / 0 | 32/80 | 0/10 | 35 | 0 | 1 | 24 (2) | 11 | 13.9 |
+| `qwen3.5:9b-mlx` | rule-based | 8 / 0 / 2 | 26/80 | 0/10 | 33 | 3 | 0 | 0 (0) | 10 | 11.2 |
+| `qwen3.8:27b-mlx` | approve all | 10 / 0 / 0 | 58/80 | 0/10 | 61 | 0 | 3 | 0 (0) | 13 | 49.1 |
+| `qwen3.8:27b-mlx` | rule-based | 10 / 0 / 0 | 64/80 | 0/10 | 64 | 0 | 1 | 0 (0) | 11 | 35.2 |
+
+After (`runs/eval/20261006T042619Z`):
+
+| Model | Condition | Done / failed / crashed | Faults fixed | Fully cleaned | Asked | Rejected | Replans | Collateral rows (runs) | Model calls | Median s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen3.5:9b-mlx` | approve all | 9 / 1 / 0 | 35/80 | 0/10 | 42 | 0 | 2 | 20 (1) | 12 | 15.4 |
+| `qwen3.5:9b-mlx` | rule-based | 8 / 2 / 0 | 25/80 | 0/10 | 37 | 4 | 5 | 0 (0) | 15 | 15.3 |
+| `qwen3.8:27b-mlx` | approve all | 10 / 0 / 0 | 68/80 | 0/10 | 48 | 0 | 0 | 0 (0) | 10 | 46.9 |
+| `qwen3.8:27b-mlx` | rule-based | 10 / 0 / 0 | 68/80 | 1/10 | 49 | 0 | 1 | 0 (0) | 11 | 29.9 |
+
+Failed runs, crashes, and their faults stay in every denominator. What the
+counts show, without claiming more than ten fixtures allow:
+
+- `qwen3.8:27b-mlx` fixes `missing_tokens` in 20/20 runs after the profiler
+  fix (0/20 before). Its remaining misses are `impossible_values`: 17 of 20
+  plans have no op on `quantity` (11 of 20 before). The profile shows
+  `min: -4` with no hint that negatives are wrong; whether the longer
+  profile or MLX's run-to-run variation (seen in M5) caused the drop is not
+  separable at this sample size. `missing_values` is fixed in 14/20.
+- `qwen3.5:9b-mlx` never imputes `rating` and rarely filters quantity. Its
+  failed runs are op-order errors (median of `amount` while still text,
+  seed 0, three attempts) and a date format it kept repeating (seed 8).
+- Collateral damage comes only from `qwen3.5:9b-mlx` under approve all
+  (deleting rows with a missing region or amount). The rule-based approver
+  rejected those filters (and once a `drop_column` on `region`), and
+  collateral went to zero; the nulls those filters would have removed stay.
+- The 27b model asks for approval about 5 times per run; nothing it asked
+  for was rejected by the rule-based approver.
+- No run fully cleaned a fixture except one (27b, rule-based). The
+  bottleneck for the better model is the quantity filter.
+
+Evidence: `uv run pytest -q` gives 102 passed, 3 deselected (new: 10 in
+`tests/test_evaluate.py`, 2 in `tests/test_executor.py`, 1 in
+`tests/test_profile_and_faults.py`, plus the marker assertion in the
+existing profile test); the new and touched test files also pass with
+`LANGGRAPH_STRICT_MSGPACK=true` and `-W error`; ruff clean. Without the
+executor fix both new executor tests fail; scoring collateral by index
+instead of content fails `test_dedupe_keep_last_is_not_collateral`.
+`uv run pytest -q -m live tests/test_evaluate.py` gives 1 passed (42 s).
+Not measured: thinking on (see Open questions).
 
 ### M8: write-up
 
@@ -371,4 +451,7 @@ earned its place here and why `ds-research-agent` does not use it.
 ## Open questions
 
 - Whether thinking with a larger token budget improves plan quality enough to
-  justify the latency. Measure in M7 rather than guess.
+  justify the latency. Still open: M7 measured `think=False` only. The
+  runner records `think` per row, so `TRIAGE_MODEL__THINK=true
+  TRIAGE_MODEL__NUM_PREDICT=<budget> uv run python -m triage.evaluate ...`
+  gives a comparable table.

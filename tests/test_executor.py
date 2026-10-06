@@ -127,3 +127,11 @@ def test_unknown_op_and_extra_fields_are_rejected():
         adapter.validate_python({"op": "run_python", "reason": "r"})
     with pytest.raises(ValidationError):
         adapter.validate_python({"op": "drop_column", "column": "x", "reason": "r", "sql": "1"})
+
+
+@pytest.mark.parametrize("fmt", ["%Y-%m-%Y", "%Q"])
+def test_bad_datetime_format_is_an_op_error(fmt):
+    # Both crashed the graph in the M7 evaluation: route catches OpError only.
+    df = pd.DataFrame({"d": ["2025-01-02", "3 Jan 2025"]})
+    with pytest.raises(OpError, match="datetime_format"):
+        apply_op(df, CastType(column="d", to="datetime", datetime_format=fmt, reason="r"))
