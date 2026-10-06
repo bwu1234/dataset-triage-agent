@@ -56,3 +56,5 @@ class Settings(BaseSettings):
     csv_na_values: list[str] = [""]
     max_plan_retries: int = Field(default=2, ge=0)
     checkpoint_db: Path = Path("runs/checkpoints.sqlite")
+    # Each run writes its intermediate frames and output to runs_dir/<thread_id>.
+    runs_dir: Path = Path("runs")

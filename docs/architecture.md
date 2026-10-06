@@ -2,42 +2,61 @@
 
 Status markers: **(built)** exists and is tested; **(planned)** does not exist yet.
 
-## Graph (planned, M2–M5)
+## Graph
+
+Built (M2), from `graph.get_graph().draw_mermaid()`:
 
 ```mermaid
 flowchart TD
     START --> load --> profile --> plan
-    plan --> route
+    plan -- plan parsed --> route
+    plan -- planner failed --> finish
     route -- safe --> apply
+    route -- "op cannot apply (skipped) / over risk policy (held)" --> route
+    route -- ops done --> finish
+    apply --> route
+    finish --> END
+```
+
+Planned (M3–M5): the held branch goes to an `approve` node instead, and
+`validate` sits between `route` and `finish`:
+
+```mermaid
+flowchart TD
     route -- over risk policy --> approve
-    route -- op cannot apply --> route
     approve -- approve / edit --> apply
     approve -- reject --> route
-    apply -- more ops --> route
-    apply -- plan done --> validate
-    validate -- passes --> finish --> END
+    route -- ops done --> validate
+    validate -- passes --> finish
     validate -- fails, retries left --> plan
     validate -- fails, no retries --> finish
 ```
 
-`approve` pauses the run with `interrupt()`. The run resumes when the CLI
-sends `Command(resume=...)` on the same `thread_id`. Checkpoints are written
-by `SqliteSaver` after every step, so a killed process resumes where it stopped.
+`approve` will pause the run with `interrupt()` and resume when the CLI sends
+`Command(resume=...)` on the same `thread_id`. M2 compiles with
+`InMemorySaver`; M4 swaps in `SqliteSaver` so a killed process resumes where
+it stopped.
 
-## State (planned)
+## State (built, `triage.graph.State`)
 
 | Field | Type | Notes |
 |---|---|---|
-| `input_path` | `str` | Source CSV |
+| `input_path` | `str` | Source CSV; the only input field |
+| `run_dir` | `str` | `Settings.runs_dir / thread_id` |
 | `current_path` | `str` | Latest intermediate frame on disk |
 | `profile` | `DatasetProfile` | From `triage.profile` |
 | `plan` | `CleaningPlan` | From the planner |
 | `op_index` | `int` | Next op to route |
+| `decision` | `"apply" \| "next" \| "done"` | Set by `route` for its conditional edge |
 | `audit` | `list[AuditEntry]` | `operator.add` reducer, so nodes append |
-| `retries` | `int` | Replans used |
-| `last_error` | `str \| None` | Fed back to the planner |
+| `retries` | `int` | Replans used (M5; always 0 now) |
+| `last_error` | `str \| None` | Planner error; fed back to the planner in M5 |
+| `status` | `"running" \| "done" \| "failed"` | |
+| `output_path` | `str` | `run_dir/cleaned.csv`, set by `finish` |
 
-Frames live on disk, not in state, which keeps checkpoints small.
+Frames live on disk, not in state, which keeps checkpoints small. The
+checkpointer's serializer is limited to the state's own pydantic types
+(`STATE_TYPES`).
 
 ## Modules
 
@@ -50,7 +69,7 @@ Frames live on disk, not in state, which keeps checkpoints small.
 | `triage/io.py` | `load_csv` with explicit null markers | built |
 | `triage/faults.py` | Synthetic dirty fixtures, manifests, outcome checks | built |
 | `triage/config.py` | `Settings` via pydantic-settings, `TRIAGE_` env prefix | built |
-| `triage/graph.py` | State, nodes, edges, compile | planned |
+| `triage/graph.py` | State, nodes, edges, compile; holds over-policy ops until M3 | built |
 | `triage/planner.py` | Prompt and `ChatOllama` structured output, single attempt | built |
 | `triage/gate.py` | M2 compatibility gate: parse and apply rate per model | built |
 | `triage/cli.py` | `run`, `resume`, `history`, `fork` | planned |

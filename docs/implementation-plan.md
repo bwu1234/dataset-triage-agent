@@ -20,7 +20,7 @@ README contrasts the two choices.
 | ID | Days | Milestone | Status |
 |---|---|---|---|
 | M1 | 1–2 | Op schema, profiler, executor, impact measurement, fault generator, offline tests | Done |
-| M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | In progress (gate passed) |
+| M2 | 3–4 | Graph with planner node and risk routing, in-memory checkpointer | Done |
 | M3 | 5 | Human approval via `interrupt()`, CLI | Planned |
 | M4 | 6–7 | `SqliteSaver`, crash-and-resume demo | Planned |
 | M5 | 8 | Validation node and bounded replan loop | Planned |
@@ -40,7 +40,7 @@ seeds 0–2, that every injected fault fails its check on the dirty file and
 passes after a hand-written reference plan, and that the profiler surfaces a
 hint for each fault.
 
-### M2: graph and planner
+### M2: graph and planner (done)
 
 - `State` as a `TypedDict`: input path, profile, plan, pending op index,
   audit log (list with an `operator.add` reducer), retry count, last error.
@@ -74,6 +74,29 @@ one call per fixture, no retry, `think=False`:
 - `uv run pytest -q -m live` gives 2 passed (one per model, seed 0);
   `uv run pytest -q` gives 40 passed, 2 deselected; ruff clean.
 
+**Graph result (2026-10-05): built in `triage/graph.py`.** Differences from
+the list above, on purpose:
+
+- `validate` is not a node yet. It is all M5 behaviour (invariants, replan),
+  so `route` goes to `finish` when the ops run out. `apply` always returns to
+  `route`, which also covers a plan whose last op is skipped.
+- Ops over the risk policy are **held**: logged with their impact and not
+  applied. M3 changes that one branch in `route` to go to `approve`. A hold
+  can make later ops risky too: on seed 0, holding `standardize_missing` on
+  `amount` leaves markers that the following cast would null, so it is held.
+- `apply` writes `runs/<thread_id>/step_<n>_<hash>.pkl`, the hash taken over
+  its input path and the op. A re-run reuses the file; an M6 fork that picks
+  a different op gets a different file, not a stale one.
+- Checkpoints use `JsonPlusSerializer(allowed_msgpack_modules=STATE_TYPES)`,
+  so only the state's own pydantic types are revived.
+
+Evidence: `uv run pytest -q` gives 46 passed, 2 deselected (6 new in
+`tests/test_graph.py`, fake planner); the graph tests also pass with
+`-W error` and with `LANGGRAPH_STRICT_MSGPACK=true`; ruff clean. A live run on
+seed 0 with `qwen3.5:9b-mlx` (one-off script, not a test) planned 5 ops in
+14.5 s: 1 applied (`strip_whitespace`), 4 held (two `standardize_missing`,
+`filter_rows`, `dedupe`), status `done`.
+
 ### M3: human approval
 
 - An `approve` node calls `interrupt()` with the op, its reason, and its
@@ -91,9 +114,8 @@ one call per fixture, no retry, `think=False`:
 - Demo script: start a run, kill the process while it waits for approval,
   restart with the same `thread_id`, and finish.
 - The DataFrame is not stored in graph state. State holds file paths;
-  `apply` writes each intermediate frame to `runs/<thread_id>/step_<n>.parquet`.
-  This keeps checkpoints small and makes `apply` idempotent: it skips work
-  whose output file already exists.
+  `apply` writes each intermediate frame to `runs/<thread_id>/` (built in
+  M2; see above). This keeps checkpoints small and makes `apply` idempotent.
 
 ### M5: validation and replanning
 
@@ -137,6 +159,11 @@ earned its place here and why `ds-research-agent` does not use it.
   Python 3.14.7, langgraph 1.2.12, langgraph-checkpoint-sqlite 3.1.1,
   langchain-ollama 1.1.0, langchain-core 1.6.6, ollama 0.6.3, pandas 3.0.6,
   pydantic 2.13.5, pydantic-settings 2.15.0, numpy 2.5.3.
+- **Intermediate frames are pickles** (`triage.io.save_frame`), resolved in
+  M2. CSV loses dtypes between steps, and Parquet needs `pyarrow` and rejects
+  the mixed object columns `impute(constant)` can produce. Pickle loads run
+  code, so these files have the same trust as the checkpoint database: only
+  ever read ones this process wrote under `runs_dir`.
 - **Models:** `qwen3.5:9b-mlx` for development iterations, `qwen3.8:27b-mlx`
   for the final demo and evaluation. Set with `TRIAGE_MODEL__NAME`.
 
@@ -152,4 +179,3 @@ earned its place here and why `ds-research-agent` does not use it.
 
 - Whether thinking with a larger token budget improves plan quality enough to
   justify the latency. Measure in M7 rather than guess.
-- Whether to store intermediate frames as Parquet (needs `pyarrow`) or CSV.
