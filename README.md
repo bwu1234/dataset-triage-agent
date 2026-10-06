@@ -10,12 +10,10 @@ locally on Ollama, on synthetic data.
 
 Milestones M1–M8 are built and tested: typed ops and executor, the graph
 with risk routing, human approval, durable runs, validation with bounded
-replanning, replay, an evaluation on synthetic fixtures, and this write-up.
-Each milestone's evidence (the command and its result) is in
-[`docs/implementation-plan.md`](docs/implementation-plan.md).
-
-It is a two-week project on synthetic data, not a product. The planner fixes
-most injected faults with the 27b model and rarely all of them (see
+replanning, replay, and an evaluation on synthetic fixtures. Each
+milestone's evidence (the command and its result) is in
+[`docs/implementation-plan.md`](docs/implementation-plan.md). The planner
+fixes most injected faults with the 27b model and rarely all of them (see
 [Evaluation](#evaluation)).
 
 ## How it works
@@ -148,8 +146,7 @@ one run per fixture
 ## When LangGraph earned its place
 
 The companion project [`ds-research-agent`](https://github.com/bwu1234/ds-research-agent) decided
-against an agent framework for its core loop; this one uses LangGraph. Both
-choices are deliberate.
+against an agent framework for its core loop; this one uses LangGraph.
 
 **What LangGraph did here that would otherwise be code to write and test:**
 
@@ -169,7 +166,7 @@ choices are deliberate.
 - **An append-only audit log** via a reducer (`operator.add`), which keeps
   nodes from rewriting each other's entries.
 
-**What it cost, all found while building it:**
+**What it cost:**
 
 - **Nodes re-run from the top on resume.** Anything before `interrupt()` runs
   twice, so `approve` only reads; ops are applied only in `apply`, which is
@@ -200,9 +197,9 @@ coordination, because its run ledger is the checkpoint store. That agent
 loop is not built yet, so this is a comparison of designs, not of two
 running systems.
 
-**The rule this project suggests:** a graph framework pays for itself when a
+**Rule of thumb:** a graph framework pays for itself when a
 run must stop and wait for a person, outlive its process, or branch. Those
-three features are most of this project's control flow, and LangGraph made
+three features are most of the triage graph's control flow, and LangGraph made
 each one short. A single-process tool loop that records its own ledger gets
 little from them and pays the costs above anyway.
 
