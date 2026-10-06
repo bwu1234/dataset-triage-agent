@@ -43,7 +43,8 @@ class GateRow(BaseModel):
 def run_one(settings: Settings, model: str, seed: int, workdir: Path) -> GateRow:
     config = settings.model.model_copy(update={"name": model})
     df = load_csv(write_fixture(workdir, seed), settings.csv_na_values)
-    attempt = plan_once(make_planner(config), profile(df, settings.profiler))
+    attempt = plan_once(make_planner(config), profile(df, settings.profiler),
+                        max_error_chars=config.max_error_chars)
     _, manifest = make_dirty(seed)
     row = GateRow(model=model, seed=seed, parsed=attempt.plan is not None, applied=False,
                   n_ops=0, faults_fixed=0, faults_total=len(manifest.faults),

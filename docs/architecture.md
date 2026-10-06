@@ -4,20 +4,24 @@ Status markers: **(built)** exists and is tested; **(planned)** does not exist y
 
 ## Graph
 
-Built (M2–M3); same edges as `graph.get_graph().draw_mermaid()`, with readable labels:
+Built (M2–M5); same edges as `graph.get_graph().draw_mermaid()`, with readable labels:
 
 ```mermaid
 flowchart TD
     START --> load --> profile --> plan
     plan -- plan parsed --> route
-    plan -- planner failed --> finish
+    plan -- "planner failed, retries left" --> plan
+    plan -- "planner failed, no retries" --> finish
     route -- safe --> apply
     route -- over risk policy --> approve
     route -- op cannot apply (skipped) --> route
-    route -- ops done --> finish
+    route -- ops done --> validate
     approve -- approve --> apply
     approve -- "reject / edit (re-measured)" --> route
     apply --> route
+    validate -- passes --> finish
+    validate -- "fails, retries left" --> plan
+    validate -- "fails, no retries" --> finish
     finish --> END
 ```
 
@@ -32,15 +36,19 @@ in progress (`apply` reuses its content-keyed output file). `cli run` refuses
 an existing thread, because new input on a thread restarts at `load` and drops
 any pending approval.
 
-Planned (M5): `validate` sits between `route` and `finish`:
-
-```mermaid
-flowchart TD
-    route -- ops done --> validate
-    validate -- passes --> finish
-    validate -- fails, retries left --> plan
-    validate -- fails, no retries --> finish
-```
+`validate` (`triage.validate.check_output`) compares the output with the
+loaded file and fails on: an op skipped with `OpError`; more than
+`ValidationPolicy.max_rows_removed_fraction` of rows removed in total; a
+column with more new nulls than applied ops on it account for; a cast's
+target dtype undone by a later op. Casts a person rejected are not checked.
+A failure goes back to `plan` with feedback (previous plan, failures, ops a
+person rejected), and the new plan starts again from `start_path`, so earlier
+ops are not stacked on. Planner parse and transport failures use the same
+`max_plan_retries` budget; their error is summarised and capped
+(`ModelConfig.max_error_chars`) rather than quoting the reply. When a replan
+proposes an op a person already answered, on the same input bytes, `route`
+reuses that answer (`RiskPolicy.reuse_decisions`). Out of retries, the run finishes `failed` with no
+`cleaned.csv`.
 
 ## State (built, `triage.graph.State`)
 
@@ -48,14 +56,16 @@ flowchart TD
 |---|---|---|
 | `input_path` | `str` | Source CSV; the only input field |
 | `run_dir` | `str` | `Settings.runs_dir / thread_id` |
+| `start_path` | `str` | The loaded frame (`step_000.pkl`); each plan attempt starts here |
 | `current_path` | `str` | Latest intermediate frame on disk |
 | `profile` | `DatasetProfile` | From `triage.profile` |
 | `plan` | `CleaningPlan` | From the planner |
 | `op_index` | `int` | Next op to route |
-| `decision` | `"apply" \| "approve" \| "next" \| "done"` | Set by `route` and `approve` for their conditional edges |
+| `decision` | `"route" \| "replan" \| "apply" \| "approve" \| "next" \| "done"` | Set by `plan`, `route`, `approve` and `validate` for their conditional edges |
 | `audit` | `list[AuditEntry]` | `operator.add` reducer, so nodes append |
-| `retries` | `int` | Replans used (M5; always 0 now) |
-| `last_error` | `str \| None` | Planner error; fed back to the planner in M5 |
+| `retries` | `int` | Planner calls after the first (parse or validation failures) |
+| `last_error` | `str \| None` | Why the last plan failed; fed back to the next planner call |
+| `decisions` | `dict[str, "approve" \| "reject"]` | A person's answers by `op_key` (input bytes + op without `reason`), reused when a replan meets the same op on the same data |
 | `status` | `"running" \| "done" \| "failed"` | |
 | `output_path` | `str` | `run_dir/cleaned.csv`, set by `finish` |
 
@@ -78,6 +88,7 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/planner.py` | Prompt and `ChatOllama` structured output, single attempt | built |
 | `triage/gate.py` | M2 compatibility gate: parse and apply rate per model | built |
 | `triage/cli.py` | `run`, `resume` (built); `history`, `fork` (planned) | partly built |
+| `triage/validate.py` | `check_output`: invariants on a finished run's output | built |
 | `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
 | `triage/evaluate.py` | Fixture evaluation runner | planned |
 
@@ -99,7 +110,9 @@ from measured impact, so the same op can go either way depending on the data.
 ## Trust boundary
 
 Profile sample values come from the file and are untrusted text. The planner
-prompt presents them as data. Ops are validated against the schema before
+prompt presents them as data. Replan feedback quotes column names, values and
+`OpError` messages from the same file, so it is fenced the same way
+(`<feedback>`). Ops are validated against the schema before
 anything runs, and unknown ops or extra fields are rejected, so text in a
 data file cannot add an operation the schema doesn't define.
 

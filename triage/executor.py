@@ -97,7 +97,10 @@ def _(op: Impute, df: pd.DataFrame) -> pd.DataFrame:
         fill = op.value
     if pd.isna(fill):
         raise OpError(f"impute: {op.column!r} has no non-null values")
-    df[op.column] = s.fillna(fill)
+    try:
+        df[op.column] = s.fillna(fill)
+    except TypeError as e:  # e.g. a text constant into a Float64 column.
+        raise OpError(f"impute: cannot fill {op.column!r} ({s.dtype}) with {fill!r}") from e
     return df
 
 

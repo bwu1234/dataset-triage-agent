@@ -63,7 +63,7 @@ def test_run_streams_progress_and_resumes_after_each_approval(tmp_path):
     assert code == 0 and asked == [1]
     actions = [line.split()[0] for line in lines if line and not line.startswith(" ")]
     assert actions == ["loaded", "planned", "applied", "Approval", "approved", "applied",
-                       "finished", "done:"]
+                       "validated", "finished", "done:"]
 
 
 def test_main_rejects_missing_csv(tmp_path, capsys):
@@ -71,3 +71,14 @@ def test_main_rejects_missing_csv(tmp_path, capsys):
         main(["run", str(tmp_path / "nope.csv"), "--thread", "t"])
     assert exc.value.code == 2
     assert "no such file" in capsys.readouterr().err
+
+
+def test_failed_run_reports_each_validation_failure_on_its_own_line(tmp_path):
+    bad = CleaningPlan(ops=[DropColumn(column="nope", reason="r"),
+                            DropColumn(column="gone\x1b[2J", reason="r")])
+    planner = RunnableLambda(lambda _: {"raw": AIMessage(""), "parsed": bad, "parsing_error": None})
+    graph = build_graph(Settings(runs_dir=tmp_path / "runs", max_plan_retries=0), planner=planner)
+    lines = []
+    assert run(write_fixture(tmp_path, 0), "t", graph, lambda _: None, lines.append) == 1
+    assert lines[-2].startswith("failed: op #0") and lines[-1].startswith("        op #1")
+    assert "\x1b" not in "".join(lines)

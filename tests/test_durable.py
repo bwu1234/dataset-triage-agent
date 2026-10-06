@@ -45,7 +45,8 @@ def test_run_killed_at_approval_finishes_in_a_new_process(tmp_path, monkeypatch)
     assert any("Approval needed for #1" in line for line in second)
     actions, values = _audit(_settings(tmp_path))
     assert actions == [("loaded", None), ("planned", None), ("applied", 0), ("approved", 1),
-                       ("applied", 1), ("finished", None)]
+                       ("applied", 1), ("validated", None),
+                       ("finished", None)]
     assert "channel" not in pd.read_csv(values["output_path"]).columns
 
 
@@ -71,7 +72,8 @@ def test_crash_mid_node_reruns_only_that_node(tmp_path, monkeypatch):
     assert "resuming at apply" in lines
     actions, _ = _audit(settings)
     assert actions == [("loaded", None), ("planned", None), ("applied", 0), ("approved", 1),
-                       ("applied", 1), ("finished", None)]
+                       ("applied", 1), ("validated", None),
+                       ("finished", None)]
     assert calls == ["strip_whitespace", "drop_column", "drop_column"]
 
 
@@ -96,7 +98,7 @@ def test_resume_of_unknown_or_finished_thread(tmp_path):
         assert cli.run(write_fixture(tmp_path / "in", 0), "t", g, _approve, lambda _: None) == 0
         lines = []
         assert cli.resume("t", g, _approve, lines.append) == 0
-    assert lines[-1].startswith("done:") and len(_audit(settings)[0]) == 6
+    assert lines[-1].startswith("done:") and len(_audit(settings)[0]) == 7
 
 
 def test_reused_thread_id_does_not_reuse_frames_from_another_input(tmp_path):

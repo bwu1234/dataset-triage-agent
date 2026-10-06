@@ -15,7 +15,8 @@ impact exceeds the risk policy pause the run for a person to approve, reject,
 or edit, via `uv run python -m triage.cli run <csv> --thread <id>`. Runs are
 checkpointed to SQLite, so a stopped or killed run continues with
 `uv run python -m triage.cli resume --thread <id>`; `uv run python -m
-triage.crash_demo` shows it. Replay and validation are planned, not built. See
+triage.crash_demo` shows it. Each output is validated, and a failing run is
+replanned up to a limit. Replay and evaluation are planned, not built. See
 [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 ## Design in one paragraph

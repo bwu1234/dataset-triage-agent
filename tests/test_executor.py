@@ -75,6 +75,14 @@ def test_impute_mean_on_text_column_raises(df):
         apply_op(df, Impute(column="c", strategy="mean", reason="r"))
 
 
+def test_impute_text_constant_into_nullable_float_raises_op_error():
+    # pandas raises TypeError here; route only catches OpError, so a raw
+    # TypeError would crash the run instead of skipping the op.
+    frame = pd.DataFrame({"x": pd.array([1.5, None], dtype="Float64")})
+    with pytest.raises(OpError, match="cannot fill"):
+        apply_op(frame, Impute(column="x", strategy="constant", value="zero", reason="r"))
+
+
 def test_impute_validates_constant_value():
     with pytest.raises(ValidationError):
         Impute(column="b", strategy="constant", reason="r")

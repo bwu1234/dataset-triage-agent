@@ -149,7 +149,9 @@ def _report(values: dict, write: Write) -> int:
     if values.get("status") == "done":
         write(safe(f"done: {values['output_path']}"))
         return 0
-    write(safe(f"failed: {values.get('last_error')}"))
+    # Validation failures are one per line; escape each line, not the breaks.
+    for i, line in enumerate(str(values.get("last_error")).splitlines() or [""]):
+        write(safe(f"{'failed:' if i == 0 else '       '} {line}"))
     return 1
 
 
