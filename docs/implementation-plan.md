@@ -26,7 +26,7 @@ README contrasts the two choices.
 | M5 | 8 | Validation node and bounded replan loop | Done |
 | M6 | 9 | Replay from earlier checkpoints | Done |
 | M7 | 10 | Evaluation on synthetic fixtures | Done |
-| M8 | 10 | README, graph diagram, LangGraph-vs-hand-written write-up | Planned |
+| M8 | 10 | README, graph diagram, LangGraph-vs-hand-written write-up | Done |
 
 ### M1: deterministic parts (done)
 
@@ -409,11 +409,41 @@ instead of content fails `test_dedupe_keep_last_is_not_collateral`.
 `uv run pytest -q -m live tests/test_evaluate.py` gives 1 passed (42 s).
 Not measured: thinking on (see Open questions).
 
-### M8: write-up
+### M8: write-up (done)
 
 README with the Mermaid graph from `graph.get_graph().draw_mermaid()`, a
 recorded demo run, the evaluation table, and a section on when LangGraph
 earned its place here and why `ds-research-agent` does not use it.
+
+**Result (2026-10-06): built.** `README.md`, `docs/demo.md`,
+`triage/writeup.py`. Differences from the list above, on purpose:
+
+- **The README's diagram is generated and tested.** `triage.writeup mermaid`
+  prints it; `tests/test_writeup.py` fails when the README copy differs from
+  the compiled graph. `docs/architecture.md` keeps its hand-labelled version,
+  whose edge labels are easier to read than the `decision` values.
+- **The demo is recorded through the CLI's own `run` and `ask_approval`**,
+  with only the keyboard replaced by a scripted person
+  (`triage.writeup.scripted_answer`) whose answers are echoed after each
+  prompt. Piping `yes a` into the CLI (M3–M6) cannot show answers in the
+  transcript or answer differently per op.
+- **The scripted person edits, not just approves.** The first recording
+  approved everything and so approved a `cast_type` on `order_date` with a
+  fixed format that nulled the 17 dates written as `3 Jan 2025`. The script
+  now edits such a cast to drop the format, which also shows the edit path:
+  `route` re-measures the replacement and applies it without asking again.
+- **`ds-research-agent` has no agent loop yet** (its milestone D0). The
+  comparison quotes its recorded decision and says it compares designs, not
+  two running systems.
+
+Evidence: `uv run pytest -q` gives 106 passed, 3 deselected (4 new in
+`tests/test_writeup.py`: README diagram equals `draw_mermaid()`; transcript
+shows prompts with answers; a `not_null` filter is rejected; a lossy date
+cast is edited and re-measured, asked once); ruff clean. Live
+(`uv run python -m triage.writeup demo --seed 0`, `qwen3.8:27b-mlx`):
+7 ops planned in 22.7 s, 5 approvals asked (4 approved, 1 edited), status
+`done`, 6 of 8 faults fixed by `check_all` (missing ratings and negative
+quantities left).
 
 ## Decisions
 

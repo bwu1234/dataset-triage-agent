@@ -98,7 +98,8 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/cli.py` | `run`, `resume`, `history`, `fork` | built |
 | `triage/validate.py` | `check_output`: invariants on a finished run's output | built |
 | `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
-| `triage/evaluate.py` | Fixture evaluation runner | planned |
+| `triage/evaluate.py` | Fixture evaluation: scripted approvers, scoring against manifests | built |
+| `triage/writeup.py` | README Mermaid diagram and the recorded demo (`docs/demo.md`) | built |
 
 ## Ops
 
