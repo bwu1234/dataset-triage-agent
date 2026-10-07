@@ -110,6 +110,21 @@ uv run python -m triage.cli fork --thread <id> --checkpoint <cid>   # re-answer 
 uv run python -m triage.crash_demo --seed 0             # SIGKILL at an approval, then resume
 ```
 
+`run`, `resume` and `fork` append a Markdown trace to `runs/<thread>/trace.md`
+(`triage.trace`): each node's state update, each approval pause and answer,
+and for each model call the messages and the reply's thinking, output, tool
+calls and token counts. `trace_prompts.md` holds just the model calls, in
+order: the exact prompt text Ollama renders from the messages (via its
+`_debug_render_only` request field, which renders without generating), the
+diff from the previous call's prompt, and the reply. Next to them,
+`trace_debug.md` holds the libraries' own debug output for the same run:
+LangChain's `set_debug` handler (`FunctionCallbackHandler`, pointed at the
+file) and LangGraph's `stream_mode="debug"` events. It shows the messages as
+LangChain's `System: … Human: …` string, not the prompt the model receives,
+and records whole graph states at every step (about 1 MB for one run). Turn
+them off with `TRIAGE_TRACE__ENABLED=false` and
+`TRIAGE_TRACE__DEBUG_ENABLED=false`.
+
 ## Evaluation
 
 Ten seeded fixtures, each a 200-row orders table with eight injected faults

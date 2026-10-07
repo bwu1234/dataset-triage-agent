@@ -74,10 +74,10 @@ def build_messages(profile: DatasetProfile, feedback: str | None = None) -> list
     return [SystemMessage(SYSTEM_PROMPT), HumanMessage(text)]
 
 
-def make_planner(config: ModelConfig) -> Runnable[Any, dict[str, Any]]:
-    """A runnable returning ``{"raw", "parsed", "parsing_error"}``; it does not
-    raise on bad output, so callers can count and feed back failures."""
-    model = ChatOllama(
+def chat_model(config: ModelConfig) -> ChatOllama:
+    """The configured model. ``triage.trace`` builds its own from the same
+    config to re-create the request the planner sent."""
+    return ChatOllama(
         model=config.name,
         base_url=config.base_url,
         temperature=config.temperature,
@@ -85,7 +85,12 @@ def make_planner(config: ModelConfig) -> Runnable[Any, dict[str, Any]]:
         num_predict=config.num_predict,
         client_kwargs={"timeout": config.timeout_s},
     )
-    return model.with_structured_output(CleaningPlan, include_raw=True)
+
+
+def make_planner(config: ModelConfig) -> Runnable[Any, dict[str, Any]]:
+    """A runnable returning ``{"raw", "parsed", "parsing_error"}``; it does not
+    raise on bad output, so callers can count and feed back failures."""
+    return chat_model(config).with_structured_output(CleaningPlan, include_raw=True)
 
 
 def plan_once(planner: Runnable[Any, dict[str, Any]], profile: DatasetProfile,

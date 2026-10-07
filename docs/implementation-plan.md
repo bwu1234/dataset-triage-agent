@@ -497,6 +497,37 @@ Demo re-recorded (`uv run python -m triage.writeup demo --seed 0`,
 `qwen3.8:27b-mlx`, Ollama 0.35.1): 11 ops in 54.7 s, status `done`, 8 of 8
 faults fixed by `check_all` (6 of 8 in the M8 recording).
 
+### After M8: run traces (done)
+
+Reading how the planner's prompt is assembled meant reconstructing it by
+hand. LangChain's `set_debug` shows messages as one `System: … Human: …`
+string, and the chat template for `qwen3.x` models is Ollama's built-in Go
+renderer (`TEMPLATE {{ .Prompt }}`, `RENDERER qwen3.8`), so no copy of it
+exists to render locally.
+
+**Result (2026-10-07): built.** `triage.trace` writes three Markdown files
+under `runs/<thread>/`, appended by `run`, `resume`, `fork` and `evaluate`:
+
+- `trace.md`: each node's state update, approval pauses and answers, and
+  each model call's messages, thinking, output and token counts.
+- `trace_prompts.md`: each model call's exact prompt text, from Ollama's
+  undocumented `_debug_render_only` request field (renders without
+  generating), its diff from the previous call's prompt, and the reply.
+- `trace_debug.md`: the libraries' own debug output for comparison,
+  LangChain's `FunctionCallbackHandler` (what `set_debug` attaches) and
+  LangGraph's `stream_mode="debug"` events.
+
+The rendered prompt shows what the messages do not: with `think=low`,
+Ollama adds "Reasoning effort is set to low…" to the top of the system
+prompt, and the `format` schema is not part of the prompt text.
+
+Evidence: `uv run pytest -q` gives 113 passed, 3 deselected (6 in
+`tests/test_trace.py`, offline: the ChatOllama client and the render call
+are stubbed); ruff clean. Live, one `triage.cli.run` on fixture seed 0 with
+`qwen3.8:27b-mlx`, `TRIAGE_MODEL__THINK=low`, Ollama 0.35.1: status `done`,
+one planner call (1902 prompt tokens, 1388 output), files of 36 KB, 11 KB
+and 947 KB.
+
 ## Decisions
 
 - **The model outputs typed ops, never code.** That removes the need for a

@@ -35,6 +35,7 @@ from triage.graph import (
 )
 from triage.impact import Impact
 from triage.ops import AnyOp, Op
+from triage.trace import NO_TRACING, Tracing, tracing
 
 Read = Callable[[str], str]
 Write = Callable[[str], None]
@@ -106,7 +107,7 @@ def _answer(state: StateSnapshot, ask: Ask) -> Command:
 
 
 def run(csv: Path, thread: str, graph: CompiledStateGraph, ask: Ask, write: Write = print,
-        banner: str | None = None) -> int:
+        banner: str | None = None, traces: Tracing = NO_TRACING) -> int:
     config = run_config(thread)
     if graph.get_state(config).values:
         # New input on an existing thread would start over from ``load`` and
@@ -116,10 +117,11 @@ def run(csv: Path, thread: str, graph: CompiledStateGraph, ask: Ask, write: Writ
         return 2
     if banner:
         write(safe(banner))
-    return _drive(graph, config, {"input_path": str(csv)}, ask, write)
+    return _drive(graph, config, {"input_path": str(csv)}, ask, write, traces=traces)
 
 
-def resume(thread: str, graph: CompiledStateGraph, ask: Ask, write: Write = print) -> int:
+def resume(thread: str, graph: CompiledStateGraph, ask: Ask, write: Write = print,
+           traces: Tracing = NO_TRACING) -> int:
     """Continue a thread from its last checkpoint: answer the pending approval,
     or re-run the node that was in progress when the process stopped."""
     config = run_config(thread)
@@ -133,7 +135,8 @@ def resume(thread: str, graph: CompiledStateGraph, ask: Ask, write: Write = prin
         return _report(state.values, write)
     write(safe(f"resuming at {', '.join(state.next)}"))
     # ``None`` input continues from the checkpoint without new state.
-    return _drive(graph, config, _answer(state, ask) if state.interrupts else None, ask, write)
+    return _drive(graph, config, _answer(state, ask) if state.interrupts else None, ask, write,
+                  traces=traces)
 
 
 def history(thread: str, graph: CompiledStateGraph, write: Write = print) -> int:
@@ -180,7 +183,7 @@ def _event(s: StateSnapshot, parent: StateSnapshot | None) -> str:
 
 
 def fork(thread: str, checkpoint: str, graph: CompiledStateGraph, ask: Ask,
-         write: Write = print) -> int:
+         write: Write = print, traces: Tracing = NO_TRACING) -> int:
     """Run a thread again from an earlier checkpoint, as a new branch. The old
     branch stays in ``history``; the fork's checkpoints are the newest, so
     ``resume`` continues the fork if it is stopped."""
@@ -204,16 +207,23 @@ def fork(thread: str, checkpoint: str, graph: CompiledStateGraph, ask: Ask,
     # checkpoint and drops the old answer, so a pending approval is asked
     # again. A resume command at the same checkpoint keeps the old answer's
     # writes and ignores the new one (checked in tests/test_replay.py).
-    return _drive(graph, config, None, ask, write, start=at)
+    return _drive(graph, config, None, ask, write, start=at, traces=traces)
 
 
 def _drive(graph: CompiledStateGraph, config, inp: dict | Command | None, ask: Ask,
-           write: Write, start: RunnableConfig | None = None) -> int:
+           write: Write, start: RunnableConfig | None = None,
+           traces: Tracing = NO_TRACING) -> int:
     """Stream until the run ends, asking at each approval. ``start`` (a fork's
     checkpoint) applies to the first stream only; after that the thread's
-    newest checkpoint is the one to continue."""
+    newest checkpoint is the one to continue. ``traces`` see every node and
+    model call."""
+    modes = ["updates", "debug"] if traces.graph_events else ["updates"]
     while True:
-        for chunk in graph.stream(inp, start or config, stream_mode="updates"):
+        stream_config = {**(start or config), "callbacks": list(traces.callbacks)}
+        for mode, chunk in graph.stream(inp, stream_config, stream_mode=modes):
+            if mode == "debug":
+                traces.graph_events(chunk)
+                continue
             for node, update in chunk.items():
                 if node == "__interrupt__" or not update:
                     continue
@@ -262,17 +272,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run" and not args.csv.is_file():
         parser.error(f"no such file: {args.csv}")
     settings = Settings()
+    title = {"run": f"`run {getattr(args, 'csv', '')}`", "resume": "`resume`",
+             "fork": f"`fork --checkpoint {getattr(args, 'checkpoint', '')}`"}.get(args.command)
+    traces = tracing(settings, args.thread, title) if title else NO_TRACING
     try:
         with open_checkpointer(settings.checkpoint_db) as saver:
             graph = build_graph(settings, checkpointer=saver)
             if args.command == "history":
                 return history(args.thread, graph)
             if args.command == "resume":
-                return resume(args.thread, graph, ask_approval)
+                return resume(args.thread, graph, ask_approval, traces=traces)
             if args.command == "fork":
-                return fork(args.thread, args.checkpoint, graph, ask_approval)
-            return run(args.csv, args.thread, graph, ask_approval,
-                       banner=f"planning with {settings.model.name}; this can take a minute")
+                return fork(args.thread, args.checkpoint, graph, ask_approval, traces=traces)
+            banner = f"planning with {settings.model.name}; this can take a minute"
+            banner += "".join(f"\ntrace: {path}" for path in traces.paths)
+            return run(args.csv, args.thread, graph, ask_approval, banner=banner, traces=traces)
     except (KeyboardInterrupt, EOFError):
         print()
         print(safe(f"stopped. Continue with: uv run python -m triage.cli resume "
