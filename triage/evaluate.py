@@ -43,6 +43,7 @@ from triage.graph import ApprovalDecision, ApprovalRequest, build_graph, run_con
 from triage.io import load_frame
 from triage.ops import DropColumn, FilterRows
 from triage.planner import make_planner
+from triage.trace import tracing
 
 Condition = Literal["approve_all", "rule_based"]
 CONDITIONS: tuple[Condition, ...] = ("approve_all", "rule_based")
@@ -146,12 +147,17 @@ def run_one(settings: Settings, planner: Runnable, condition: Condition, seed: i
     row = EvalRow(model=settings.model.name, think=settings.model.think, condition=condition,
                   seed=seed, status="crashed", faults_total=len(manifest.faults))
     thread = re.sub(r"[^A-Za-z0-9_.-]", "-", f"{settings.model.name}-{condition}-s{seed}")
-    config = run_config(thread)
+    traces = tracing(settings, thread, f"`evaluate`, condition {condition}, seed {seed}")
+    config = {**run_config(thread), "callbacks": traces.callbacks}
     start = time.monotonic()
     try:
         inp: dict | Command = {"input_path": str(csv)}
         while True:
-            graph.invoke(inp, config)
+            if traces.graph_events:
+                for event in graph.stream(inp, config, stream_mode="debug"):
+                    traces.graph_events(event)
+            else:
+                graph.invoke(inp, config)
             state = graph.get_state(config)
             if not state.interrupts:
                 break

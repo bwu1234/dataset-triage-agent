@@ -100,6 +100,7 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
 | `triage/evaluate.py` | Fixture evaluation: scripted approvers, scoring against manifests | built |
 | `triage/writeup.py` | README Mermaid diagram and the recorded demo (`docs/demo.md`) | built |
+| `triage/trace.py` | Markdown trace per thread: node updates, approvals, each model call's thinking, output and tokens; rendered prompts with deltas in `trace_prompts.md`; plus LangChain's and LangGraph's own debug output in `trace_debug.md` | built |
 
 ## Ops
 
@@ -126,3 +127,7 @@ anything runs, and unknown ops or extra fields are rejected, so text in a
 data file cannot add an operation the schema doesn't define.
 
 The fixture manifests are answer keys. They stay out of the planner's input.
+
+The traces (`runs/<thread>/trace*.md`) copy profile sample values and model
+output verbatim, inside fenced blocks sized to outgrow any backticks in
+them. They are local files for reading; nothing reads them back into a run.

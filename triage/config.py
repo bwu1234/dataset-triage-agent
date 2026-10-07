@@ -80,6 +80,25 @@ class ProfilerConfig(BaseModel):
     missing_tokens: list[str] = ["", "n/a", "na", "null", "none", "-", "?", "unknown"]
 
 
+class TraceConfig(BaseModel):
+    """The Markdown traces (``triage.trace``) that ``triage.cli`` and
+    ``triage.evaluate`` append to under ``runs_dir/<thread>/``."""
+
+    enabled: bool = True
+    file_name: str = "trace.md"
+    # Each model call's rendered prompt, delta and reply, without the steps.
+    prompts_file_name: str = "trace_prompts.md"
+    # Ask Ollama for the exact prompt text it feeds the model. Costs one extra
+    # request per model call, which renders without generating.
+    render_prompt: bool = True
+    render_timeout_s: float = 10.0
+    # A second file with the libraries' own debug output, to compare with
+    # the trace: LangChain's set_debug handler and LangGraph's debug stream.
+    # It logs whole graph states at every step, so it runs to megabytes.
+    debug_enabled: bool = True
+    debug_file_name: str = "trace_debug.md"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TRIAGE_", env_nested_delimiter="__")
 
@@ -88,6 +107,7 @@ class Settings(BaseSettings):
     validation: ValidationPolicy = ValidationPolicy()
     profiler: ProfilerConfig = ProfilerConfig()
     evaluation: EvaluationConfig = EvaluationConfig()
+    trace: TraceConfig = TraceConfig()
     # Cell values read as null on load. pandas' default list would hide markers
     # like 'N/A' before the agent ever sees them.
     csv_na_values: list[str] = [""]
