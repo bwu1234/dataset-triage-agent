@@ -78,6 +78,8 @@ def test_profile_surfaces_fault_hints(fixture_frame):
     assert 0 < cols["amount"].numeric_parse_rate < 1
     assert cols["rating"].null_count > 0
     assert cols["quantity"].min < 0
+    assert cols["quantity"].negative_count == int((df["quantity"] < 0).sum())
+    assert cols["order_id"].negative_count == 0
     assert cols["channel"].distinct_count == 1
 
 
@@ -93,3 +95,18 @@ def test_missing_tokens_found_lists_one_spelling_per_token():
     assert col.missing_token_count == 4
     # Sorted by lowercased token; the first spelling seen wins.
     assert col.missing_tokens_found == ["?", "N/A", "NULL"]
+
+
+def test_negative_count_covers_numeric_text_only():
+    frame = pd.DataFrame({
+        "n": [-1.5, 2.0, None, -3.0],
+        "t": ["-2", " 5", "n/a", "-0.5"],
+        "words": ["a", "b", "c", "d"],
+        "flag": [True, False, True, False],
+    })
+    cols = {c.name: c for c in profile(frame, SETTINGS.profiler).columns}
+    assert cols["n"].negative_count == 2
+    # Text is counted on its parsed values; markers do not parse.
+    assert cols["t"].negative_count == 2
+    assert cols["words"].negative_count is None
+    assert cols["flag"].negative_count is None
