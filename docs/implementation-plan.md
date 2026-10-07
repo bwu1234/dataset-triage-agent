@@ -27,6 +27,17 @@ contrasts the two choices.
 | M6 | Replay from earlier checkpoints | Done |
 | M7 | Evaluation on synthetic fixtures | Done |
 | M8 | README, graph diagram, LangGraph-vs-hand-written write-up | Done |
+| M9 | Evaluation hygiene: one Ollama version, held-out seeds, clean-file control, token counts | Planned |
+| M10 | More schemas and hand-labelled real data | Planned |
+| M11 | Ablations on the held-out set | Planned |
+| M12 | End-to-end prompt injection | Planned |
+| M13 | Approval quality: which questions mattered, an editing approver | Planned |
+| M14 | Read-only investigation tools for wide tables | Planned |
+| M15 | Plan critic | Planned |
+
+M9 comes first: every later table is reported on its held-out seeds and
+single Ollama version. M10–M13 can land in any order after it. M14 needs
+M9's token counts and M10's wide fixtures. M15 is last and optional.
 
 ### M1: deterministic parts (done)
 
@@ -527,6 +538,148 @@ are stubbed); ruff clean. Live, one `triage.cli.run` on fixture seed 0 with
 `qwen3.8:27b-mlx`, `TRIAGE_MODEL__THINK=low`, Ollama 0.35.1: status `done`,
 one planner call (1902 prompt tokens, 1388 output), files of 36 KB, 11 KB
 and 947 KB.
+
+### M9: evaluation hygiene (planned)
+
+Three problems in the M7 and "After M8" numbers come before any new
+measurement:
+
+- **Tuned on the test set.** The missing-marker fix (M7) and
+  `negative_count` (After M8) were found by reading failures on seeds 0–9
+  and then measured on seeds 0–9.
+- **Two Ollama versions.** The 27b rows ran on 0.35.1 and the 9b rows on
+  0.40.0, so the model comparison is not controlled.
+- **No clean-file control.** Every fixture has faults, so nothing measures
+  what the agent does to a file that needs no cleaning. Collateral rows
+  count removed rows only.
+
+Deliverables:
+
+- Dev and held-out seeds in `EvaluationConfig`: seeds 0–9 stay the dev set
+  for reading failures; held-out seeds (100–129) are run only to report a
+  table, and their per-run rows are not read while changing the prompt,
+  profile or policy.
+- Both models on Ollama 0.35.1 (0.40.0 panics on the 27b model, see "After
+  M8"). Each `results.jsonl` row records the server version from
+  `/api/version`, and the summary refuses to merge rows from different
+  versions.
+- A clean condition: `triage.faults` writes fixtures with no faults and an
+  empty manifest. Metrics: ops proposed, approvals asked, and cells that
+  differ from the input after the run.
+- Prompt and output tokens, and model calls, per run in the summary table
+  (the counts `triage.trace` already reads from the reply).
+
+Done when: one table for both models on the held-out seeds and the clean
+condition, on one Ollama version, with tokens per run.
+
+Temperature is 0.0 (`ModelConfig.temperature`), so repeated runs on one
+fixture measure MLX nondeterminism only; more seeds give more information
+per run than repeats.
+
+### M10: more schemas and real data (planned)
+
+Every fixture is the same `orders` table with the same eight fault kinds,
+so the M7 numbers cannot separate "plans well" from "learned `orders`".
+
+Deliverables:
+
+- At least two more synthetic schemas in `triage.faults` with different
+  column names, dtypes and fault mixes, including at least one fault kind
+  the orders table does not have. Same `Manifest` and `CHECKS` format.
+- Two or three public CSVs with real faults, fetched by a script that checks
+  a pinned checksum (not committed), each with a hand-written manifest.
+  Record the source, licence, and labelling rules for each, since a real
+  file has faults nobody injected and the manifest only scores the ones
+  labelled.
+
+Done when: the M9 table broken down by schema, with the real files as their
+own rows, run on the held-out seeds where the schema is synthetic.
+
+### M11: ablations (planned)
+
+Measure what each design choice contributes, on M9's held-out seeds. Each
+condition is a flag in `triage/config.py`:
+
+- No `validate`: it always passes, so no replans.
+- Routing by op name: a fixed op-to-approval table (the "Usually needs
+  approval?" column of `docs/architecture.md`) in place of measured impact.
+- Profile without fault hints: no `missing_tokens_found`,
+  `negative_count`, or the other per-column hints.
+
+Report counts with a 95% Wilson interval on fully cleaned fixtures. Faults
+within one fixture are not independent, so fault-level counts get no
+interval.
+
+Done when: one table, full system against each ablation, both approvers,
+for at least the 27b model.
+
+### M12: prompt injection (planned)
+
+`tests/test_planner.py` checks that sample values stay inside the
+`<profile>` fence. That covers the prompt, not the outcome. The schema
+limits an attacker to valid ops, so the realistic attack is text in the
+file that steers the planner toward a destructive op it allows (dropping a
+needed column, a filter that removes most rows) or away from a fix.
+
+Deliverables:
+
+- Attack fixtures from `triage.faults`: payloads in cell values and column
+  names, in several styles (direct command, fake system note, fake
+  feedback). The manifest records the payload and its target op.
+- Metrics per model and approver: attack success rate (the plan contains
+  the target op), the rate at which the target op reaches the output, and
+  faults fixed on the same fixtures, so a defence that also stops normal
+  cleaning shows up.
+
+Done when: the table exists for both models and both approvers. Any defence
+added afterwards is re-measured against it.
+
+### M13: approval quality (planned)
+
+The 27b model asks about 5.5 questions per run, and the scripted approvers
+only approve or reject, so the edit path never runs in the evaluation.
+
+Deliverables:
+
+- For each op that asked for approval, its effect from applying the final
+  plan with and without it (the executor is deterministic, so this needs no
+  model calls): fixes a fault, causes collateral damage or breaks a check,
+  or no effect. Report the share of questions in each group.
+- An editing approver: rules that replace an op instead of rejecting it,
+  for failures seen in dev runs (for example, a `cast_type` to datetime with
+  a fixed `datetime_format` becomes one with `datetime_format=None`). Edited
+  ops go back to `route` as in the CLI.
+
+Done when: both metrics are in the evaluation table for three approvers.
+
+### M14: investigation tools (planned)
+
+The planner is one structured call. On M7's 8-column tables the profile
+already holds what a tool loop would look up, so a loop is tested where the
+profile cannot hold everything.
+
+Deliverables:
+
+- Wide fixtures (80+ columns) with the profile capped by a config budget,
+  so the planner sees a summary per column and must look up details.
+- Read-only tools with pydantic-validated arguments and no expression,
+  code, or query strings: `column_profile(column)`,
+  `value_counts(column, top_k)`, `sample_rows(columns, n)`. Their output is
+  untrusted file data and is fenced like the profile.
+- A step budget in `ModelConfig`; each tool round counts as a model call.
+  Tools read only, so the node has no side effects to repeat on resume.
+
+Done when: one-shot and tool-loop planners compared on narrow and wide
+fixtures, with tokens and time. A tie or loss is recorded as the result.
+
+### M15: plan critic (planned, optional)
+
+One extra model call reviews the plan against the profile before `route`
+and returns typed issues; the planner revises once. This is a node in the
+same graph, not a second agent.
+
+Done when: compared with the M9 baseline on the held-out seeds, with the
+extra tokens and time per run.
 
 ## Decisions
 
