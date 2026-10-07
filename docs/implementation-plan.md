@@ -445,6 +445,58 @@ cast is edited and re-measured, asked once); ruff clean. Live
 `done`, 6 of 8 faults fixed by `check_all` (missing ratings and negative
 quantities left).
 
+### After M8: negative values in the profile (done)
+
+The M7 run's main 27b miss was `impossible_values`: 17 of 20 plans had no op
+on `quantity`. The profile showed `min: -4` and nothing else about sign.
+
+**Result (2026-10-07): built.** `ColumnProfile.negative_count` counts values
+below zero in numeric columns and in text that parses as numbers (over the
+parsed values). It is an observation about the data, like
+`missing_tokens_found`; the planner prompt is unchanged, so the run below
+measures the profile alone. In fixtures 0–4 `quantity` shows 16–20 negatives
+and every other numeric column 0.
+
+Live, `uv run python -m triage.evaluate --models qwen3.8:27b-mlx --seeds 0 1
+2 3 4 5 6 7 8 9` (`runs/eval/20261007T020200Z`), against the M7 "after" run
+(`runs/eval/20261006T042619Z`). Both on Ollama 0.35.1, `think=False`:
+
+| `qwen3.8:27b-mlx` | Before | After |
+|---|---|---|
+| Plans with an op on `quantity` | 3/20 | 17/20 |
+| `impossible_values` fixed | 3/20 | 17/20 |
+| Faults fixed (approve all / rule-based) | 68/80, 68/80 | 72/80, 77/80 |
+| Fully cleaned (approve all / rule-based) | 0/10, 1/10 | 4/10, 7/10 |
+| Done / failed / crashed | 20 / 0 / 0 | 20 / 0 / 0 |
+| Collateral rows | 0 | 0 |
+
+All 17 `quantity` ops are `filter_rows` (`>` or `>=` 0) whose reason quotes
+the count ("has 16 negative values"), which only `negative_count` supplies.
+Remaining 27b misses: `missing_values` in 6 runs, `impossible_values` in 3
+(no `quantity` op), `mixed_date_formats` in 2. The rise in approvals asked
+(48 → 55 approve all) is the extra row filter per run.
+
+`qwen3.5:9b-mlx` did not improve (`runs/eval/20261007T011527Z`, Ollama
+0.40.0, so not a controlled comparison): 10/20 plans touch `quantity`
+(9/20 before), but 7 of those are `filter_rows(not_null)` on a column with
+no nulls, so `impossible_values` was fixed in 3/20 (6/20 before). Its two
+failed runs are seed 6, a median imputed on `amount` while still text.
+
+**Ollama 0.40.0 breaks the 27b model.** The app auto-updated from 0.35.1 to
+0.40.0 between the two runs. Under 0.40.0, every planner call to
+`qwen3.8:27b-mlx` failed with `mlx runner failed: panic: mlx: Maximum
+threads per threadgroup is 896 but requested 960 for kernel
+sdpa_vector_2pass...` (20/20 runs failed); a short prompt works, a full
+profile does not, with or without `negative_count`. Downgrading to 0.35.1
+fixed it. `qwen3.5:9b-mlx` ran normally on 0.40.0.
+
+Evidence: `uv run pytest -q` gives 107 passed, 3 deselected (new
+`test_negative_count_covers_numeric_text_only`; the fixture profile test
+checks the exact count on `quantity` and 0 on `order_id`); ruff clean.
+Demo re-recorded (`uv run python -m triage.writeup demo --seed 0`,
+`qwen3.8:27b-mlx`, Ollama 0.35.1): 11 ops in 54.7 s, status `done`, 8 of 8
+faults fixed by `check_all` (6 of 8 in the M8 recording).
+
 ## Decisions
 
 - **The model outputs typed ops, never code.** That removes the need for a
@@ -469,6 +521,10 @@ quantities left).
   ever read ones this process wrote under `runs_dir`.
 - **Models:** `qwen3.5:9b-mlx` for development iterations, `qwen3.8:27b-mlx`
   for the final demo and evaluation. Set with `TRIAGE_MODEL__NAME`.
+- **Ollama 0.35.1.** The M7 runs and the 27b run in "After M8" used it
+  (the server log dates each version). 0.40.0 panics in the
+  MLX runner on full-length prompts to `qwen3.8:27b-mlx` (see "After M8").
+  The Ollama app auto-updates, so check `ollama --version` before a run.
 
 ## Out of scope
 

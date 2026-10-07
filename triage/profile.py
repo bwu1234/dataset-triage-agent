@@ -28,6 +28,11 @@ class ColumnProfile(BaseModel):
     min: float | None = None
     max: float | None = None
     mean: float | None = None
+    # Values below zero, for numeric columns and for text that parses as
+    # numbers. min alone did not show how many values were negative or that
+    # they were a minority: 27b plans left quantity's negative values alone in
+    # 17 of 20 runs (M7 eval).
+    negative_count: int | None = None
 
 
 class DatasetProfile(BaseModel):
@@ -65,6 +70,7 @@ def _profile_column(name: str, s: pd.Series, config: ProfilerConfig) -> ColumnPr
         if not non_null.empty:
             col.min, col.max, col.mean = (float(non_null.min()), float(non_null.max()),
                                           float(non_null.mean()))
+            col.negative_count = int((non_null < 0).sum())
         return col
     strings = non_null[non_null.map(lambda v: isinstance(v, str))]
     if not strings.empty:
@@ -78,6 +84,8 @@ def _profile_column(name: str, s: pd.Series, config: ProfilerConfig) -> ColumnPr
         col.whitespace_padded_count = int((stripped != strings).sum())
         parsed = pd.to_numeric(stripped, errors="coerce")
         col.numeric_parse_rate = round(float(parsed.notna().mean()), 4)
+        if parsed.notna().any():
+            col.negative_count = int((parsed < 0).sum())
     return col
 
 

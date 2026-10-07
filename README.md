@@ -13,8 +13,8 @@ with risk routing, human approval, durable runs, validation with bounded
 replanning, replay, and an evaluation on synthetic fixtures. Each
 milestone's evidence (the command and its result) is in
 [`docs/implementation-plan.md`](docs/implementation-plan.md). The planner
-fixes most injected faults with the 27b model and rarely all of them (see
-[Evaluation](#evaluation)).
+fixes most injected faults with the 27b model and all of them in about half
+the runs (see [Evaluation](#evaluation)).
 
 ## How it works
 
@@ -85,7 +85,7 @@ format, which would have turned 17 dates written as `3 Jan 2025` into nulls.
 
 ```text
 Approval needed for #4: cast_type 'order_date'
-  reason: The 'order_date' column is a string but represents dates. Casting it to datetime with the observed format (YYYY-MM-DD) enables date-based analysis.
+  reason: The 'order_date' column is stored as string but contains date values in ISO format (YYYY-MM-DD). Casting to datetime enables date-based analysis and filtering.
   impact: 17 values nulled
 [a]pprove, [r]eject, or [e]dit? e
 Replacement op as JSON (same shape as 'op' above): {..., "op":"cast_type","column":"order_date","to":"datetime","datetime_format":null}
@@ -95,9 +95,9 @@ applied     #4 cast_type 'order_date': 17 values modified
 
 The edited op has no fixed format. `route` measured it again, found nothing
 turned null, and applied it without asking a second time. The run then asked
-about dropping the constant `channel` column and removing 16 duplicates, and
-finished `done` with 6 of 8 injected faults fixed: the plan had no op for
-the missing ratings or the negative quantities.
+about removing the 16 rows with a negative quantity (the reason quotes the
+profile's count), removing 16 duplicates, and dropping the constant
+`channel` column, and finished `done` with all 8 injected faults fixed.
 
 Other commands, each covered by tests and a recorded live run in the
 implementation plan:
@@ -123,25 +123,30 @@ one run per fixture
 
 | Model | Approver | Done / failed / crashed | Faults fixed | Fully cleaned | Approvals asked | Rejected | Replans | Rows wrongly removed | Median s |
 |---|---|---|---|---|---|---|---|---|---|
-| `qwen3.5:9b-mlx` | approve all | 9 / 1 / 0 | 35/80 | 0/10 | 42 | 0 | 2 | 20 | 15.4 |
-| `qwen3.5:9b-mlx` | rule-based | 8 / 2 / 0 | 25/80 | 0/10 | 37 | 4 | 5 | 0 | 15.3 |
-| `qwen3.8:27b-mlx` | approve all | 10 / 0 / 0 | 68/80 | 0/10 | 48 | 0 | 0 | 0 | 46.9 |
-| `qwen3.8:27b-mlx` | rule-based | 10 / 0 / 0 | 68/80 | 1/10 | 49 | 0 | 1 | 0 | 29.9 |
+| `qwen3.5:9b-mlx` | approve all | 9 / 1 / 0 | 32/80 | 0/10 | 34 | 0 | 2 | 0 | 14.3 |
+| `qwen3.5:9b-mlx` | rule-based | 9 / 1 / 0 | 31/80 | 0/10 | 36 | 1 | 3 | 0 | 12.8 |
+| `qwen3.8:27b-mlx` | approve all | 10 / 0 / 0 | 72/80 | 4/10 | 55 | 0 | 2 | 0 | 41.9 |
+| `qwen3.8:27b-mlx` | rule-based | 10 / 0 / 0 | 77/80 | 7/10 | 57 | 0 | 1 | 0 | 29.9 |
 
-- The 27b model fixes six fault kinds almost every time. Its misses are
-  negative quantities (no `quantity` op in 17 of 20 plans) and missing
-  ratings (imputed in 14 of 20).
-- The 9b model's wrongly removed rows come from deleting rows with a missing
-  region or amount; the rule-based approver rejected those filters, at the
-  cost of the nulls they would have removed staying put.
+- The 27b model fully cleans 11 of 20 fixtures. Its misses are missing
+  ratings (imputed in 14 of 20), negative quantities (3 of 20), and date
+  parsing (2 of 20).
+- Negative quantities were the 27b model's main miss (no `quantity` op in
+  17 of 20 plans) until the profile reported how many values are negative
+  (`negative_count`); now 17 of 20 plans filter them, each citing the count.
+- The 9b model rarely fixes negative quantities: most of its `quantity` ops
+  are `not_null` filters on a column with no nulls. It never imputes
+  `rating`.
 - The evaluation's first run found two bugs, fixed before the run above: the
   profiler counted missing-value markers but showed only five sample values,
   so no plan could name all three markers (0/40 runs fixed that fault, now
   20/20 for 27b); and a malformed `datetime_format` crashed the graph.
 - Ten fixtures and MLX's run-to-run variation support counts, not rates.
-  Scoring rules, the approvers, and both runs' tables are in
-  [`docs/evaluation-plan.md`](docs/evaluation-plan.md) and the
-  [M7 section](docs/implementation-plan.md#m7-evaluation-done).
+  The 27b rows ran on Ollama 0.35.1 and the 9b rows on 0.40.0, which crashes
+  the 27b model on full-length prompts. Scoring rules, the approvers, and
+  every run's table are in [`docs/evaluation-plan.md`](docs/evaluation-plan.md),
+  the [M7 section](docs/implementation-plan.md#m7-evaluation-done), and
+  [After M8](docs/implementation-plan.md#after-m8-negative-values-in-the-profile-done).
 
 ## When LangGraph earned its place
 
@@ -207,7 +212,8 @@ little from them and pays the costs above anyway.
 
 Requires [uv](https://docs.astral.sh/uv/) and, for model runs, a local
 [Ollama](https://ollama.com/) with `qwen3.8:27b-mlx` (the default) or
-`qwen3.5:9b-mlx` pulled (`TRIAGE_MODEL__NAME` selects it).
+`qwen3.5:9b-mlx` pulled (`TRIAGE_MODEL__NAME` selects it). Use Ollama
+0.35.1: 0.40.0 crashes `qwen3.8:27b-mlx` on full-length prompts.
 
 ```
 uv sync
