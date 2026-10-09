@@ -66,6 +66,12 @@ class ApprovalRequest(BaseModel):
     op_index: int
     op: Op
     impact: Impact
+    # Totals in the frame the op would run on, so an impact can be read as a
+    # share: "216 values nulled" is every date, or one in ten. ``non_null``
+    # counts the op's column, or the whole frame for an op without one. None
+    # in a request saved before these fields existed.
+    rows: int | None = None
+    non_null: int | None = None
 
 
 class ApprovalDecision(BaseModel):
@@ -275,8 +281,12 @@ def build_graph(
         resume, so everything before ``interrupt()`` only reads."""
         i, ops = state["op_index"], state["plan"].ops
         src = Path(state["current_path"])
-        impact = assess(load_frame(src), ops[i])
-        answer = interrupt(ApprovalRequest(op_index=i, op=ops[i], impact=impact),
+        df = load_frame(src)
+        impact = assess(df, ops[i])
+        column = getattr(ops[i], "column", None)
+        cells = df[column] if column in df.columns else df
+        answer = interrupt(ApprovalRequest(op_index=i, op=ops[i], impact=impact, rows=len(df),
+                                           non_null=int(cells.notna().to_numpy().sum())),
                            response_schema=ApprovalDecision)
         if answer.action in ("approve", "reject"):
             decisions = {**state.get("decisions", {}), op_key(src, ops[i]): answer.action}

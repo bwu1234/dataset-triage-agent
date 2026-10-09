@@ -539,6 +539,82 @@ are stubbed); ruff clean. Live, one `triage.cli.run` on fixture seed 0 with
 one planner call (1902 prompt tokens, 1388 output), files of 36 KB, 11 KB
 and 947 KB.
 
+### After M8: run diagrams (done)
+
+The README diagram shows the graph's edges, not the path one run took, and
+`trace.md` gives that path only as text: 29 steps for one run.
+
+**Result (2026-10-09): built.** `uv run python -m triage.writeup path --thread
+<id>` prints a Mermaid flowchart of a thread's steps, read from its
+checkpoints (`get_state_history`) rather than from `trace.md`, so any thread
+in `checkpoint_db` can be drawn, traced or not. Each checkpoint's `next` names
+the node that ran to produce the following one, and the checkpoint before an
+`approve` keeps its interrupt, the op and impact the person was shown.
+
+- One box per node that ran, with the audit entries it added. A `route` step
+  that only decided becomes the label on the next edge (`within limits`,
+  `over limits`, `all ops routed`); one that skipped an op or reused an
+  answer is a box.
+- Approve boxes are coloured by the answer; an edit lists the changed
+  fields (`datetime_format: '%Y-%m-%d' → None`).
+- After a fork it draws the branch `resume` continues (`cli.current_branch`,
+  shared with `history`), with a box where the fork starts. A stopped run
+  ends at the approval it is waiting for.
+- Labels carry column names and notes from the input, so `#`, quotes, angle
+  brackets, backticks and `|` become Mermaid entities.
+
+`writeup demo` now appends the diagram to `docs/demo.md`; the current page
+had it added from the recorded thread's checkpoints, without a new model run.
+
+Evidence: `uv run pytest -q` gives 118 passed, 3 deselected (5 new in
+`tests/test_writeup.py`, one fork assertion in `tests/test_replay.py`); ruff
+clean. `path --thread demo-s0-20261007T023944Z` drew 22 boxes, rendered
+without errors by `@mermaid-js/mermaid-cli` 11.4.2.
+
+### After M8: a cast that nulled a whole column (done)
+
+The `live4` diagram (`runs/live4/path.md`) showed op #4, `cast_type
+'order_date'`, nulling all 216 values, and the run still finished `done`.
+Four links let it through:
+
+1. The model wrote `datetime_format: "YYYY-MM-DD"`. It has no `%` directive,
+   so pandas reads it as literal text, matches no value, and
+   `errors="coerce"` nulls them all without raising. The executor's
+   bad-format guard (M7) only caught formats that raise. With `%Y-%m-%d` the
+   same data loses 17 values. Of the runs on disk, only `live2` and `live4`
+   (both `qwen3.8:27b-mlx`, `think=low`) produced it; the four evaluation
+   runs (`think=False`) never did. Two runs, so not a measured effect.
+2. `route` measured "216 values nulled" and asked, as designed.
+3. The approver was a script that approved everything.
+4. `validate` accepted nulls that an approved op accounted for.
+
+**Result (2026-10-09): built.**
+
+- `CastType` refuses a `datetime_format` with no strftime directive
+  (`mixed` and `ISO8601`, pandas' named formats, still pass). The plan fails
+  parsing and the planner is asked again with the error, which names the op
+  and the fix. It also applies to a person's edit.
+- `validate` fails a column left entirely null that had values in the input,
+  whoever approved it; the feedback says to fix the op or drop the column.
+- Approval requests carry the frame's row count and the non-null values in
+  the op's column (`ApprovalRequest.rows`, `non_null`, optional so paused
+  runs saved earlier still load). The CLI shows shares: `216 values nulled
+  (ALL of the 216 non-null values in 'order_date')`, `17 values nulled (8% of
+  the 216 …)`. Shares are never rounded to 0% or 100% unless exact.
+
+Not done: the planner prompt still does not show a format example. The
+schema description already says "strftime format", and a prompt change
+would move the evaluation baseline (M9); the refusal's message covers it on
+retry, at the cost of one more planner call.
+
+Evidence: `uv run pytest -q` gives 130 passed, 3 deselected (12 new across
+`tests/test_executor.py`, `tests/test_validate.py`, `tests/test_cli.py`);
+ruff clean. Replayed offline against `live4`: its recorded plan now fails
+`CleaningPlan` validation at `('ops', 4, 'cast_type')`, and `check_output`
+on its recorded input and output reports `column 'order_date' is entirely
+null in the output but had 200 non-null values in the input` (200 rows
+survive `dedupe`).
+
 ### M9: evaluation hygiene (planned)
 
 Three problems in the M7 and "After M8" numbers come before any new

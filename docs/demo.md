@@ -77,3 +77,60 @@ op has no format, `route` measured it again, found nothing nulled, and applied
 it without asking a second time. Ops #6–#8 impute `rating` (mean), `region`
 (mode), and `amount` (median) without asking: filling nulls removes nothing and nulls
 nothing, so no `RiskPolicy` limit is exceeded.
+
+## Path through the graph
+
+Drawn from the run's checkpoints with `uv run python -m triage.writeup path --thread demo-s0-20261007T023944Z`. Each box is a node that ran, with what it added to the audit log; edge labels are what `route` decided. Green is an approved op, red a rejected one, amber an edited one.
+
+```mermaid
+flowchart TD
+  start(["start"])
+  s1["<b>load</b><br/>216 rows, 9 columns"]
+  start --> s1
+  s2["<b>profile</b>"]
+  s1 --> s2
+  s3["<b>plan</b><br/>11 ops in 54.7s, attempt 1"]
+  s2 --> s3
+  s4["<b>apply</b><br/>#35;0 strip_whitespace 'customer': 17 values modified"]
+  s3 -->|within limits| s4
+  s5["<b>approve</b><br/>#35;1 standardize_missing 'region': 16 values nulled<br/>approved"]:::approved
+  s4 -->|over limits| s5
+  s6["<b>apply</b><br/>#35;1 standardize_missing 'region': 16 values nulled"]
+  s5 --> s6
+  s7["<b>approve</b><br/>#35;2 standardize_missing 'amount': 18 values nulled<br/>approved"]:::approved
+  s6 -->|over limits| s7
+  s8["<b>apply</b><br/>#35;2 standardize_missing 'amount': 18 values nulled"]
+  s7 --> s8
+  s9["<b>apply</b><br/>#35;3 cast_type 'amount': no change"]
+  s8 -->|within limits| s9
+  s10["<b>approve</b><br/>#35;4 cast_type 'order_date': 17 values nulled<br/>edited: datetime_format: '%Y-%m-%d' → None"]:::edited
+  s9 -->|over limits| s10
+  s11["<b>apply</b><br/>#35;4 cast_type 'order_date': 17 values modified"]
+  s10 -->|within limits| s11
+  s12["<b>approve</b><br/>#35;5 filter_rows 'quantity': 16 rows removed<br/>approved"]:::approved
+  s11 -->|over limits| s12
+  s13["<b>apply</b><br/>#35;5 filter_rows 'quantity': 16 rows removed"]
+  s12 --> s13
+  s14["<b>apply</b><br/>#35;6 impute 'rating': 17 values filled"]
+  s13 -->|within limits| s14
+  s15["<b>apply</b><br/>#35;7 impute 'region': 15 values filled"]
+  s14 -->|within limits| s15
+  s16["<b>apply</b><br/>#35;8 impute 'amount': 16 values filled"]
+  s15 -->|within limits| s16
+  s17["<b>approve</b><br/>#35;9 dedupe (all columns): 16 rows removed<br/>approved"]:::approved
+  s16 -->|over limits| s17
+  s18["<b>apply</b><br/>#35;9 dedupe (all columns): 16 rows removed"]
+  s17 --> s18
+  s19["<b>approve</b><br/>#35;10 drop_column 'channel': 1 columns removed<br/>approved"]:::approved
+  s18 -->|over limits| s19
+  s20["<b>apply</b><br/>#35;10 drop_column 'channel': 1 columns removed"]
+  s19 --> s20
+  s21["<b>validate</b><br/>passed"]
+  s20 -->|all ops routed| s21
+  s22["<b>finish</b><br/>cleaned_dca1ba30cab98a95.csv"]
+  s21 --> s22
+  done(["end: done"])
+  s22 --> done
+  classDef approved fill:#dcfce7,stroke:#15803d,color:#14532d
+  classDef edited fill:#fef3c7,stroke:#b45309,color:#78350f
+```

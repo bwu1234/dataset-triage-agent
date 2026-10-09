@@ -135,3 +135,19 @@ def test_bad_datetime_format_is_an_op_error(fmt):
     df = pd.DataFrame({"d": ["2025-01-02", "3 Jan 2025"]})
     with pytest.raises(OpError, match="datetime_format"):
         apply_op(df, CastType(column="d", to="datetime", datetime_format=fmt, reason="r"))
+
+
+@pytest.mark.parametrize("fmt", ["YYYY-MM-DD", "yyyy/mm/dd", "2025-01-02"])
+def test_datetime_format_without_a_directive_is_refused(fmt):
+    # pandas matches no value against literal text and nulls them all.
+    with pytest.raises(ValidationError, match="no strftime directive"):
+        CastType(column="d", to="datetime", datetime_format=fmt, reason="r")
+
+
+@pytest.mark.parametrize(("fmt", "value"), [(None, "2025-01-02"), ("%Y-%m-%d", "2025-01-02"),
+                                           ("%d %b %Y", "2 Jan 2025"), ("mixed", "2 Jan 2025"),
+                                           ("ISO8601", "2025-01-02")])
+def test_datetime_formats_pandas_understands_are_accepted(fmt, value):
+    df = pd.DataFrame({"d": [value]})
+    out = apply_op(df, CastType(column="d", to="datetime", datetime_format=fmt, reason="r"))
+    assert out["d"].notna().all()

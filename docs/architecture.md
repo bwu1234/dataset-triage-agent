@@ -47,8 +47,9 @@ branches never overwrite each other's frames or output.
 `validate` (`triage.validate.check_output`) compares the output with the
 loaded file and fails on: an op skipped with `OpError`; more than
 `ValidationPolicy.max_rows_removed_fraction` of rows removed in total; a
-column with more new nulls than applied ops on it account for; a cast's
-target dtype undone by a later op. Casts a person rejected are not checked.
+column with more new nulls than applied ops on it account for; a column left
+entirely null that had values in the input, even if a person approved the op
+that nulled it; a cast's target dtype undone by a later op. Casts a person rejected are not checked.
 A failure goes back to `plan` with feedback (previous plan, failures, ops a
 person rejected), and the new plan starts again from `start_path`, so earlier
 ops are not stacked on. Planner parse and transport failures use the same
@@ -99,7 +100,7 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/validate.py` | `check_output`: invariants on a finished run's output | built |
 | `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
 | `triage/evaluate.py` | Fixture evaluation: scripted approvers, scoring against manifests | built |
-| `triage/writeup.py` | README Mermaid diagram and the recorded demo (`docs/demo.md`) | built |
+| `triage/writeup.py` | README Mermaid diagram, one run's path as Mermaid (`path`), and the recorded demo (`docs/demo.md`) | built |
 | `triage/trace.py` | Markdown trace per thread: node updates, approvals, each model call's thinking, output and tokens; rendered prompts with deltas in `trace_prompts.md`; plus LangChain's and LangGraph's own debug output in `trace_debug.md` | built |
 
 ## Ops

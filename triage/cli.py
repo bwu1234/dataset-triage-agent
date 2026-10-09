@@ -50,7 +50,7 @@ def safe(text: object) -> str:
     return "".join(c if c.isprintable() else repr(c)[1:-1] for c in str(text))
 
 
-def _target(op: AnyOp) -> str:
+def op_target(op: AnyOp) -> str:
     column = getattr(op, "column", None)
     if column is not None:
         return f"{op.op} {column!r}"
@@ -58,9 +58,40 @@ def _target(op: AnyOp) -> str:
     return f"{op.op} {subset}" if subset else f"{op.op} (all columns)"
 
 
-def _impact(impact: Impact) -> str:
+def impact_text(impact: Impact) -> str:
     parts = [f"{v} {k.replace('_', ' ')}" for k, v in impact.model_dump().items() if v]
     return ", ".join(parts) or "no change"
+
+
+def request_impact(request: ApprovalRequest) -> str:
+    """``impact_text`` with removed rows and nulled values as shares of what
+    the op would run on, so taking every value reads differently from taking
+    a few."""
+    impact = request.impact
+    if request.rows is None or request.non_null is None:
+        return impact_text(impact)
+    column = getattr(request.op, "column", None)
+    where = f"non-null values in {column!r}" if column is not None else "non-null values"
+    parts = []
+    for key, count in impact.model_dump().items():
+        if not count:
+            continue
+        text = f"{count} {key.replace('_', ' ')}"
+        if key == "rows_removed":
+            text += f" ({_share(count, request.rows)} rows)"
+        elif key == "values_nulled":
+            text += f" ({_share(count, request.non_null)} {where})"
+        parts.append(text)
+    return ", ".join(parts) or "no change"
+
+
+def _share(count: int, total: int) -> str:
+    """'ALL of the 216', '8% of the 216': never rounded to 100% or 0% unless exact."""
+    if total and count >= total:
+        return f"ALL of the {total}"
+    pct = count / total if total else 0.0
+    shown = ">99%" if pct > 0.99 else "<1%" if pct < 0.01 else f"{pct:.0%}"
+    return f"{shown} of the {total}"
 
 
 def describe(entry: AuditEntry, width: int = 11) -> str:
@@ -68,9 +99,9 @@ def describe(entry: AuditEntry, width: int = 11) -> str:
     if entry.op_index is not None:
         line += f" #{entry.op_index}"
     if entry.op is not None:
-        line += f" {_target(entry.op)}"
+        line += f" {op_target(entry.op)}"
     if entry.impact is not None:
-        line += f": {_impact(entry.impact)}"
+        line += f": {impact_text(entry.impact)}"
     if entry.detail:
         line += f" ({entry.detail})"
     return safe(line)
@@ -79,9 +110,9 @@ def describe(entry: AuditEntry, width: int = 11) -> str:
 def ask_approval(request: ApprovalRequest, read: Read = input, write: Write = print) -> ApprovalDecision:
     op = request.op
     write("")
-    write(safe(f"Approval needed for #{request.op_index}: {_target(op)}"))
+    write(safe(f"Approval needed for #{request.op_index}: {op_target(op)}"))
     write(safe(f"  reason: {op.reason}"))
-    write(safe(f"  impact: {_impact(request.impact)}"))
+    write(safe(f"  impact: {request_impact(request)}"))
     write(safe(f"  op:     {op.model_dump_json()}"))
     while True:
         choice = read("[a]pprove, [r]eject, or [e]dit? ").strip().lower()
@@ -148,10 +179,7 @@ def history(thread: str, graph: CompiledStateGraph, write: Write = print) -> int
         write(safe(f"no run with thread {thread!r}"))
         return 2
     by_id = {_checkpoint_id(s.config): s for s in snapshots}
-    current, node = set(), snapshots[0]
-    while node is not None:
-        current.add(_checkpoint_id(node.config))
-        node = by_id.get(_checkpoint_id(node.parent_config)) if node.parent_config else None
+    current = {_checkpoint_id(s.config) for s in current_branch(snapshots)}
     write(safe(f"thread {thread!r}: {len(snapshots)} checkpoints, newest first; "
                f"* marks the branch 'resume' continues"))
     write(f"  {'step':>4}  {'checkpoint':<36}  {'next':<9}  event")
@@ -161,6 +189,17 @@ def history(thread: str, graph: CompiledStateGraph, write: Write = print) -> int
         write(safe(f"{'*' if cid in current else ' '} {s.metadata['step']:>4}  {cid:<36}  "
                    f"{', '.join(s.next) or '-':<9}  {_event(s, parent)}".rstrip()))
     return 0
+
+
+def current_branch(snapshots: list[StateSnapshot]) -> list[StateSnapshot]:
+    """The newest checkpoint and its ancestors, newest first: the branch
+    ``resume`` continues. ``snapshots`` is ``get_state_history`` output."""
+    by_id = {_checkpoint_id(s.config): s for s in snapshots}
+    branch, node = [], snapshots[0] if snapshots else None
+    while node is not None:
+        branch.append(node)
+        node = by_id.get(_checkpoint_id(node.parent_config)) if node.parent_config else None
+    return branch
 
 
 def _checkpoint_id(config) -> str:
@@ -178,7 +217,7 @@ def _event(s: StateSnapshot, parent: StateSnapshot | None) -> str:
         parts += [describe(e, width=0) for e in s.values.get("audit", [])[before:]]
     for intr in s.interrupts:
         req = intr.value
-        parts.append(f"asks: #{req.op_index} {_target(req.op)}: {_impact(req.impact)}")
+        parts.append(f"asks: #{req.op_index} {op_target(req.op)}: {impact_text(req.impact)}")
     return "; ".join(parts)
 
 
