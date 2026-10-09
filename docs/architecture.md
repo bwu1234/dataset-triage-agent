@@ -99,7 +99,7 @@ checkpointer's serializer is limited to the state's own pydantic types
 | `triage/validate.py` | `check_output`: invariants on a finished run's output | built |
 | `triage/crash_demo.py` | M4 demo: SIGKILL a run at its first approval, resume it in a new process | built |
 | `triage/evaluate.py` | Fixture evaluation: scripted approvers, scoring against manifests | built |
-| `triage/writeup.py` | README Mermaid diagram and the recorded demo (`docs/demo.md`) | built |
+| `triage/writeup.py` | README Mermaid diagram, one run's path as Mermaid (`path`), and the recorded demo (`docs/demo.md`) | built |
 | `triage/trace.py` | Markdown trace per thread: node updates, approvals, each model call's thinking, output and tokens; rendered prompts with deltas in `trace_prompts.md`; plus LangChain's and LangGraph's own debug output in `trace_debug.md` | built |
 
 ## Ops

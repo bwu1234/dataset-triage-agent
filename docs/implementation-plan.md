@@ -539,6 +539,38 @@ are stubbed); ruff clean. Live, one `triage.cli.run` on fixture seed 0 with
 one planner call (1902 prompt tokens, 1388 output), files of 36 KB, 11 KB
 and 947 KB.
 
+### After M8: run diagrams (done)
+
+The README diagram shows the graph's edges, not the path one run took, and
+`trace.md` gives that path only as text: 29 steps for one run.
+
+**Result (2026-10-09): built.** `uv run python -m triage.writeup path --thread
+<id>` prints a Mermaid flowchart of a thread's steps, read from its
+checkpoints (`get_state_history`) rather than from `trace.md`, so any thread
+in `checkpoint_db` can be drawn, traced or not. Each checkpoint's `next` names
+the node that ran to produce the following one, and the checkpoint before an
+`approve` keeps its interrupt, the op and impact the person was shown.
+
+- One box per node that ran, with the audit entries it added. A `route` step
+  that only decided becomes the label on the next edge (`within limits`,
+  `over limits`, `all ops routed`); one that skipped an op or reused an
+  answer is a box.
+- Approve boxes are coloured by the answer; an edit lists the changed
+  fields (`datetime_format: '%Y-%m-%d' → None`).
+- After a fork it draws the branch `resume` continues (`cli.current_branch`,
+  shared with `history`), with a box where the fork starts. A stopped run
+  ends at the approval it is waiting for.
+- Labels carry column names and notes from the input, so `#`, quotes, angle
+  brackets, backticks and `|` become Mermaid entities.
+
+`writeup demo` now appends the diagram to `docs/demo.md`; the current page
+had it added from the recorded thread's checkpoints, without a new model run.
+
+Evidence: `uv run pytest -q` gives 118 passed, 3 deselected (5 new in
+`tests/test_writeup.py`, one fork assertion in `tests/test_replay.py`); ruff
+clean. `path --thread demo-s0-20261007T023944Z` drew 22 boxes, rendered
+without errors by `@mermaid-js/mermaid-cli` 11.4.2.
+
 ### M9: evaluation hygiene (planned)
 
 Three problems in the M7 and "After M8" numbers come before any new

@@ -13,6 +13,7 @@ from triage.faults import write_fixture
 from triage.graph import build_graph, open_checkpointer, run_config
 from triage.io import load_frame
 from triage.ops import CleaningPlan, StripWhitespace
+from triage.writeup import run_path
 
 
 def _approve(_request):
@@ -87,6 +88,11 @@ def test_fork_at_an_approval_asks_again_and_keeps_both_branches(env):
                                       and not s.next).config)
     assert any(r.startswith(" ") and old_end in r for r in rows)
     assert sum(r.startswith("*") and "asks: #1 drop_column" in r for r in rows) == 2
+
+    # The diagram follows the fork, from the shared steps through the new answer.
+    diagram = run_path(g, "t")
+    assert f"<b>fork</b><br/>from checkpoint {approval}" in diagram
+    assert ":::rejected" in diagram and ":::approved" not in diagram
 
 
 def test_resume_command_at_an_old_checkpoint_keeps_the_old_answer(env):

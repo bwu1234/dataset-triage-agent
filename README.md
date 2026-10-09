@@ -107,6 +107,7 @@ uv run python -m triage.cli run <csv> --thread <id>     # plan, ask, apply, vali
 uv run python -m triage.cli resume --thread <id>        # continue a stopped or killed run
 uv run python -m triage.cli history --thread <id>       # list checkpoints
 uv run python -m triage.cli fork --thread <id> --checkpoint <cid>   # re-answer from one
+uv run python -m triage.writeup path --thread <id>     # draw a run's steps as Mermaid
 uv run python -m triage.crash_demo --seed 0             # SIGKILL at an approval, then resume
 ```
 
