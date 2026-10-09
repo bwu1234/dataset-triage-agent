@@ -50,3 +50,17 @@ def test_skipped_op_reported_once_and_rejected_cast_not_at_all():
     ops = [CastType(column="t", to="float", reason="r"), CastType(column="q", to="int", reason="r")]
     failures = _check(BEFORE, ops, skipped={1: "boom"}, rejected={0})
     assert failures == ["op #1 (cast_type) could not be applied: boom"]
+
+
+def test_column_nulled_entirely_fails_even_when_an_op_accounts_for_it():
+    # 'YYYY-MM-DD' is now refused by CastType; this stands in for any approved
+    # op that leaves nothing in a column.
+    after = BEFORE.copy()
+    after["d"] = None
+    [failure] = _check(after, [], nulled={"d": 7})
+    assert failure.startswith("column 'd' is entirely null in the output but had 7 non-null")
+
+
+def test_column_already_empty_in_the_input_is_not_reported():
+    before = BEFORE.assign(e=None)
+    assert check_output(before, before.copy(), [], {}, (), {}, POLICY) == []

@@ -37,6 +37,45 @@ def test_ask_approval_choices():
     assert (rejected.action, rejected.note) == ("reject", "still used")
 
 
+def test_approval_impact_is_shown_as_a_share_of_the_frame():
+    from triage.cli import request_impact
+    from triage.ops import CastType, FilterRows
+
+    def request(op, rows=0, nulled=0, total=216, non_null=216):
+        return ApprovalRequest(op_index=0, op=op, rows=total, non_null=non_null, impact=Impact(
+            rows_removed=rows, columns_removed=0, values_nulled=nulled, values_filled=0,
+            values_modified=0))
+
+    cast = CastType(column="order_date", to="datetime", reason="r")
+    assert (request_impact(request(cast, nulled=216))
+            == "216 values nulled (ALL of the 216 non-null values in 'order_date')")
+    assert (request_impact(request(cast, nulled=17))
+            == "17 values nulled (8% of the 216 non-null values in 'order_date')")
+    assert request_impact(request(cast, nulled=215)).startswith("215 values nulled (>99% of")
+    drop = FilterRows(column="q", operator="not_null", reason="r")
+    assert request_impact(request(drop, rows=1, total=500)) == "1 rows removed (<1% of the 500 rows)"
+    # A request saved before the totals existed shows counts only.
+    assert request_impact(REQUEST) == "1 columns removed"
+
+
+def test_approve_records_the_totals_the_op_runs_on(tmp_path):
+    from triage.graph import run_config
+    from triage.ops import StandardizeMissing
+
+    plan = CleaningPlan(ops=[StandardizeMissing(column="region", tokens=["N/A", "?", "unknown"],
+                                                reason="r")])
+    planner = RunnableLambda(lambda _: {"raw": AIMessage("{}"), "parsed": plan,
+                                        "parsing_error": None})
+    graph = build_graph(Settings(runs_dir=tmp_path / "runs"), planner)
+    graph.invoke({"input_path": str(write_fixture(tmp_path / "fx", 0))}, run_config("t"))
+    [intr] = graph.get_state(run_config("t")).interrupts
+    assert intr.value.rows == 216 and 0 < intr.value.non_null <= 216
+    shown = []
+    ask_approval(intr.value, _scripted("a"), shown.append)
+    assert any(line.startswith("  impact: 16 values nulled (") and "non-null values in 'region'"
+               in line for line in shown)
+
+
 def test_ask_approval_reprompts_on_invalid_edit():
     shown = []
     replacement = '{"op": "strip_whitespace", "column": "channel", "reason": "keep it"}'

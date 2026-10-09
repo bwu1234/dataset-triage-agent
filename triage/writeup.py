@@ -34,6 +34,7 @@ from triage.cli import (
     describe,
     impact_text,
     op_target,
+    request_impact,
     run,
     safe,
 )
@@ -160,7 +161,7 @@ def _entry_line(entry: AuditEntry) -> str:
 
 
 def _asked(request: ApprovalRequest) -> str:
-    return safe(f"#{request.op_index} {op_target(request.op)}: {impact_text(request.impact)}")
+    return safe(f"#{request.op_index} {op_target(request.op)}: {request_impact(request)}")
 
 
 def _edit_line(request: ApprovalRequest, entry: AuditEntry) -> str:

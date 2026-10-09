@@ -571,6 +571,50 @@ Evidence: `uv run pytest -q` gives 118 passed, 3 deselected (5 new in
 clean. `path --thread demo-s0-20261007T023944Z` drew 22 boxes, rendered
 without errors by `@mermaid-js/mermaid-cli` 11.4.2.
 
+### After M8: a cast that nulled a whole column (done)
+
+The `live4` diagram (`runs/live4/path.md`) showed op #4, `cast_type
+'order_date'`, nulling all 216 values, and the run still finished `done`.
+Four links let it through:
+
+1. The model wrote `datetime_format: "YYYY-MM-DD"`. It has no `%` directive,
+   so pandas reads it as literal text, matches no value, and
+   `errors="coerce"` nulls them all without raising. The executor's
+   bad-format guard (M7) only caught formats that raise. With `%Y-%m-%d` the
+   same data loses 17 values. Of the runs on disk, only `live2` and `live4`
+   (both `qwen3.8:27b-mlx`, `think=low`) produced it; the four evaluation
+   runs (`think=False`) never did. Two runs, so not a measured effect.
+2. `route` measured "216 values nulled" and asked, as designed.
+3. The approver was a script that approved everything.
+4. `validate` accepted nulls that an approved op accounted for.
+
+**Result (2026-10-09): built.**
+
+- `CastType` refuses a `datetime_format` with no strftime directive
+  (`mixed` and `ISO8601`, pandas' named formats, still pass). The plan fails
+  parsing and the planner is asked again with the error, which names the op
+  and the fix. It also applies to a person's edit.
+- `validate` fails a column left entirely null that had values in the input,
+  whoever approved it; the feedback says to fix the op or drop the column.
+- Approval requests carry the frame's row count and the non-null values in
+  the op's column (`ApprovalRequest.rows`, `non_null`, optional so paused
+  runs saved earlier still load). The CLI shows shares: `216 values nulled
+  (ALL of the 216 non-null values in 'order_date')`, `17 values nulled (8% of
+  the 216 …)`. Shares are never rounded to 0% or 100% unless exact.
+
+Not done: the planner prompt still does not show a format example. The
+schema description already says "strftime format", and a prompt change
+would move the evaluation baseline (M9); the refusal's message covers it on
+retry, at the cost of one more planner call.
+
+Evidence: `uv run pytest -q` gives 130 passed, 3 deselected (12 new across
+`tests/test_executor.py`, `tests/test_validate.py`, `tests/test_cli.py`);
+ruff clean. Replayed offline against `live4`: its recorded plan now fails
+`CleaningPlan` validation at `('ops', 4, 'cast_type')`, and `check_output`
+on its recorded input and output reports `column 'order_date' is entirely
+null in the output but had 200 non-null values in the input` (200 rows
+survive `dedupe`).
+
 ### M9: evaluation hygiene (planned)
 
 Three problems in the M7 and "After M8" numbers come before any new

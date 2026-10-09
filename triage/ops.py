@@ -4,6 +4,7 @@ The model never writes code. It returns a ``CleaningPlan`` of these ops and the
 deterministic executor in ``triage.executor`` applies them.
 """
 
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -29,6 +30,18 @@ class CastType(_Op):
     datetime_format: str | None = Field(
         default=None, description="strftime format for to='datetime'; omit to accept mixed formats."
     )
+
+    @model_validator(mode="after")
+    def _format_has_directives(self) -> "CastType":
+        # A format with no directive, such as 'YYYY-MM-DD' (live runs with
+        # think=low), is literal text to pandas: no value matches it, so every
+        # value becomes null without an error. 'mixed' and 'ISO8601' are
+        # pandas' own named formats.
+        fmt = self.datetime_format
+        if fmt is not None and fmt not in ("mixed", "ISO8601") and not re.search(r"%[A-Za-z]", fmt):
+            raise ValueError(f"datetime_format {fmt!r} has no strftime directive; use codes "
+                             "such as '%Y-%m-%d', or omit it to accept mixed formats")
+        return self
 
 
 class Impute(_Op):

@@ -63,6 +63,37 @@ def impact_text(impact: Impact) -> str:
     return ", ".join(parts) or "no change"
 
 
+def request_impact(request: ApprovalRequest) -> str:
+    """``impact_text`` with removed rows and nulled values as shares of what
+    the op would run on, so taking every value reads differently from taking
+    a few."""
+    impact = request.impact
+    if request.rows is None or request.non_null is None:
+        return impact_text(impact)
+    column = getattr(request.op, "column", None)
+    where = f"non-null values in {column!r}" if column is not None else "non-null values"
+    parts = []
+    for key, count in impact.model_dump().items():
+        if not count:
+            continue
+        text = f"{count} {key.replace('_', ' ')}"
+        if key == "rows_removed":
+            text += f" ({_share(count, request.rows)} rows)"
+        elif key == "values_nulled":
+            text += f" ({_share(count, request.non_null)} {where})"
+        parts.append(text)
+    return ", ".join(parts) or "no change"
+
+
+def _share(count: int, total: int) -> str:
+    """'ALL of the 216', '8% of the 216': never rounded to 100% or 0% unless exact."""
+    if total and count >= total:
+        return f"ALL of the {total}"
+    pct = count / total if total else 0.0
+    shown = ">99%" if pct > 0.99 else "<1%" if pct < 0.01 else f"{pct:.0%}"
+    return f"{shown} of the {total}"
+
+
 def describe(entry: AuditEntry, width: int = 11) -> str:
     line = f"{entry.action:<{width}}"
     if entry.op_index is not None:
@@ -81,7 +112,7 @@ def ask_approval(request: ApprovalRequest, read: Read = input, write: Write = pr
     write("")
     write(safe(f"Approval needed for #{request.op_index}: {op_target(op)}"))
     write(safe(f"  reason: {op.reason}"))
-    write(safe(f"  impact: {impact_text(request.impact)}"))
+    write(safe(f"  impact: {request_impact(request)}"))
     write(safe(f"  op:     {op.model_dump_json()}"))
     while True:
         choice = read("[a]pprove, [r]eject, or [e]dit? ").strip().lower()

@@ -54,6 +54,15 @@ def check_output(
         if added > nulled.get(column, 0):
             failures.append(f"column {column!r} has {added} more nulls than the input, but "
                             f"applied ops on it nulled {nulled.get(column, 0)}")
+        # Approved nulls pass the check above, including an op that nulled
+        # every value (a datetime_format that matched nothing, in live runs).
+        # A column with nothing left is lost data, whoever approved it; one
+        # that should go is dropped with drop_column instead.
+        had = int(before.loc[after.index, column].notna().sum())
+        if len(after) and had and after[column].isna().all():
+            failures.append(f"column {column!r} is entirely null in the output but had {had} "
+                            "non-null values in the input; fix the op that nulled them, or "
+                            "drop the column if it carries no information")
 
     # A person's rejection is a decision, not a planner mistake, and a skipped
     # cast is already reported above.
